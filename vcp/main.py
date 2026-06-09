@@ -376,12 +376,67 @@ def _report_backtest(trades):
 
 
 # --------------------------------------------------------------------------- #
+# watchlist — 今日「VCP 候選監控清單」（接近突破、該盯的；不寫 analyses，純監控）
+# --------------------------------------------------------------------------- #
+def cmd_watchlist(target_date=None):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT max(ts) FROM daily_prices")
+            db_max = pd.Timestamp(cur.fetchone()[0])
+            max_ts = pd.Timestamp(target_date) if target_date else db_max
+            cur.execute("SELECT symbol, name FROM symbols WHERE market='TW'")
+            names = {s: (n or "") for s, n in cur.fetchall()}
+        rows = []
+        for sym in load_symbols(conn):
+            df = load_prices(conn, sym)
+            if len(df) < 201:
+                continue
+            mask = (df["ts"] == max_ts).to_numpy()
+            if not mask.any():        # 該檔當日無資料（殭屍/停牌/非交易日）→ 跳過
+                continue
+            d = int(np.where(mask)[0][0])
+            if d < 200:
+                continue
+            ts, o, h, l, c, v = to_arrays(df)
+            res = detect_vcp_at(ts, o, h, l, c, v, d)
+            # 規格13.1 候選 + 排除「已突破過遠」（規格14：離樞紐 >5% 追高風險）
+            # dist>=-0.05 → close 不超過 pivot 的 105%；near_pivot 已保證 close>=pivot*0.95
+            if res.candidate_pass and res.distance_to_pivot >= -0.05:
+                rows.append({
+                    "symbol": sym, "name": names.get(sym, ""),
+                    "close": round(res.close, 2), "pivot": round(res.pivot_price, 2),
+                    "dist": round(res.distance_to_pivot * 100, 2),
+                    "nc": res.contraction_count,
+                    "last_dd": round(res.last_drawdown * 100, 2),
+                    "vol_dry": res.volume_dry_up, "breakout": res.breakout,
+                    "score": round(res.score, 1),
+                })
+        rows.sort(key=lambda r: (-r["score"], r["dist"]))
+        print(f"[watchlist] {max_ts.date()} VCP 候選監控清單：{len(rows)} 檔（接近突破、該盯的）")
+        print(f"{'symbol':<10}{'close':>9}{'pivot':>9}{'dist%':>8}{'nc':>4}{'lastDD%':>9}{'score':>7}  status  name")
+        for r in rows:
+            st = "BREAKOUT" if r["breakout"] else ("dry-near" if r["vol_dry"] else "near")
+            print(f"{r['symbol']:<10}{r['close']:>9}{r['pivot']:>9}{r['dist']:>8}{r['nc']:>4}"
+                  f"{r['last_dd']:>9}{r['score']:>7}  {st:<9}{r['name']}")
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("scan", "bootstrap", "backtest"):
-        print("用法: python main.py [scan|bootstrap|backtest]", file=sys.stderr)
+    valid = ("scan", "bootstrap", "backtest", "watchlist")
+    if len(sys.argv) < 2 or sys.argv[1] not in valid:
+        print("用法: python main.py [scan|bootstrap|backtest|watchlist [YYYY-MM-DD]]", file=sys.stderr)
         sys.exit(2)
-    cmd = sys.argv[1]
-    {"scan": cmd_scan, "bootstrap": cmd_bootstrap, "backtest": cmd_backtest}[cmd]()
+    if sys.argv[1] == "watchlist":
+        cmd_watchlist(sys.argv[2] if len(sys.argv) > 2 else None)
+    elif sys.argv[1] == "scan":
+        cmd_scan()
+    elif sys.argv[1] == "bootstrap":
+        cmd_bootstrap()
+    else:
+        cmd_backtest()
 
 
 if __name__ == "__main__":
