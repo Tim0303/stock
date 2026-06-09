@@ -5,6 +5,8 @@ OpenAPI 自動產生：/docs、/openapi.json 供前端 T11 對齊契約。
 """
 
 import os
+import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -14,6 +16,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+# analyst-picks 涉及昂貴的策略 view（v_strategy_latest/box 是全歷史 DISTINCT ON 掃描，
+# 單查可達數十秒甚至數分鐘，會把 DB CPU 打到 100%）。因此：
+#   1. 絕不在請求路徑上同步計算——端點永遠立即回傳「最近一次快照」。
+#   2. 由背景 thread 定時（啟動時 + 每 _ANALYST_REFRESH_SEC）重算一次快照。
+#   3. 每條 SQL 加 statement_timeout，超時的分析師 graceful 回 count:0（不卡死、不爆 CPU）。
+_ANALYST_CACHE: dict[str, Any] = {"ts": 0.0, "data": None, "computing": False}
+_ANALYST_REFRESH_SEC = 600  # 背景重算間隔（10 分鐘）；策略訊號日內不變，無需頻繁重算
+_ANALYST_STMT_TIMEOUT_MS = 45000  # 單條 SQL 上限，避免單查拖垮 DB
+_ANALYST_LOCK = threading.Lock()
 
 
 # ── DB 連線工廠（每請求短連線，無需 pool；唯讀負載低）──────────────────────
@@ -388,3 +400,290 @@ def vcp_watchlist():
 
     scan_date = rows[0]["scan_date"] if rows else None
     return {"scan_date": scan_date, "count": len(rows), "data": rows}
+
+
+# ── /api/symbols ──────────────────────────────────────────────────────────────
+@app.get(
+    "/api/symbols",
+    summary="標的清單（自動完成用）",
+    tags=["infra"],
+    response_description="symbol / name / market 清單，供前端個股查詢自動完成",
+)
+def symbols(
+    market: str = Query(default="", description="市場篩選：TW / US；空字串 = 全部"),
+    limit: int = Query(default=2000, ge=1, le=10000, description="最多回傳筆數"),
+):
+    """
+    讀 `symbols` 表，回傳 symbol, name, market。供 ChartPanel datalist 自動完成。
+    優先列出有日K資料的標的（INNER 視 daily_prices）。表不存在時回空陣列（容錯）。
+    """
+    try:
+        conn = get_conn()
+        has_table = table_exists(conn, "symbols")
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB error: {exc}")
+
+    if not has_table:
+        return {"count": 0, "data": [], "note": "symbols table not available"}
+
+    market_filter = "WHERE market = %(market)s" if market else ""
+    sql = f"""
+        SELECT symbol, name, market
+        FROM symbols
+        {market_filter}
+        ORDER BY symbol
+        LIMIT %(limit)s
+    """
+    params: dict[str, Any] = {"limit": limit}
+    if market:
+        params["market"] = market
+    try:
+        rows = query(sql, params)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"count": len(rows), "data": rows}
+
+
+# ── /api/analyst-picks ────────────────────────────────────────────────────────
+def _safe_picks(conn, table_or_view: str, sql: str, params=None) -> list[dict]:
+    """若來源表/視圖不存在回 []，查詢失敗/逾時也回 []（個別分析師容錯，不拖垮整個端點）。
+
+    每條查詢套用 statement_timeout（local，僅本交易），確保慢如箱型 view 也能被
+    強制中止，避免把 DB CPU 打滿。逾時的分析師 graceful 回空清單（count:0）。
+    """
+    try:
+        if not table_exists(conn, table_or_view):
+            return []
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SET LOCAL statement_timeout = %s", (_ANALYST_STMT_TIMEOUT_MS,))
+            cur.execute(sql, params or {})
+            return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        # 個別分析師查詢失敗/逾時不應導致 500；回空清單並標 count:0
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def _compute_analyst_picks() -> dict:
+    """實際查 5 位分析師最新推薦（昂貴；僅由背景 refresher 呼叫，絕不在請求路徑同步執行）。"""
+    conn = get_conn()
+    # 用顯式交易塊讓 SET LOCAL statement_timeout 生效（autocommit 下 LOCAL 無作用）
+    conn.autocommit = False
+
+    analysts = []
+
+    # ── 1. strat-vcp ──────────────────────────────────────────────────────────
+    vcp_rows = _safe_picks(
+        conn,
+        "vcp_watchlist",
+        """
+        SELECT symbol, name, score, status, distance_pct
+        FROM vcp_watchlist
+        WHERE scan_date = (SELECT max(scan_date) FROM vcp_watchlist)
+        ORDER BY score DESC NULLS LAST, distance_pct ASC
+        """,
+    )
+    vcp_as_of = None
+    try:
+        if table_exists(conn, "vcp_watchlist"):
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(scan_date) FROM vcp_watchlist")
+                r = cur.fetchone()
+                vcp_as_of = r[0].isoformat() if r and r[0] else None
+    except Exception:
+        conn.rollback()
+    analysts.append({
+        "skill": "strat-vcp",
+        "label": "VCP 突破",
+        "as_of": vcp_as_of,
+        "count": len(vcp_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {"status": r.get("status"), "distance_pct": r.get("distance_pct")},
+            }
+            for r in vcp_rows
+        ],
+    })
+
+    # ── 2. strat-5-10-20 ──────────────────────────────────────────────────────
+    s510_rows = _safe_picks(
+        conn,
+        "v_strategy_latest",
+        """
+        SELECT l.symbol, sy.name, l.score, l.signal_type, l.ts AS as_of
+        FROM v_strategy_latest l
+        JOIN symbols sy USING (symbol)
+        WHERE l.rating = 'buy'
+          AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+        ORDER BY l.score DESC NULLS LAST
+        """,
+    )
+    s510_as_of = s510_rows[0]["as_of"].isoformat() if s510_rows and s510_rows[0].get("as_of") else None
+    analysts.append({
+        "skill": "strat-5-10-20",
+        "label": "5-10-20 順勢",
+        "as_of": s510_as_of,
+        "count": len(s510_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {"signal_type": r.get("signal_type")},
+            }
+            for r in s510_rows
+        ],
+    })
+
+    # ── 3. strat-box ──────────────────────────────────────────────────────────
+    box_rows = _safe_picks(
+        conn,
+        "v_strategy_box_latest",
+        """
+        SELECT l.symbol, sy.name, l.score, l.ts AS as_of
+        FROM v_strategy_box_latest l
+        JOIN symbols sy USING (symbol)
+        WHERE l.buy_signal
+          AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+        ORDER BY l.score DESC NULLS LAST
+        """,
+    )
+    box_as_of = box_rows[0]["as_of"].isoformat() if box_rows and box_rows[0].get("as_of") else None
+    analysts.append({
+        "skill": "strat-box",
+        "label": "箱型區間",
+        "as_of": box_as_of,
+        "count": len(box_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {},
+            }
+            for r in box_rows
+        ],
+    })
+
+    # ── 4 & 5. baseline-momentum / ml-logreg (analyses) ───────────────────────
+    for skill_id, label in [
+        ("baseline-momentum", "動能對照"),
+        ("ml-logreg", "ML 預測"),
+    ]:
+        rows = _safe_picks(
+            conn,
+            "analyses",
+            """
+            SELECT a.symbol, sy.name, a.score, a.as_of
+            FROM analyses a
+            JOIN symbols sy USING (symbol)
+            WHERE a.skill = %(skill)s
+              AND (a.meta->>'backtest') IS DISTINCT FROM 'true'
+              AND a.predicted = 'up'
+              AND a.as_of = (
+                  SELECT max(as_of) FROM analyses
+                  WHERE skill = %(skill)s
+                    AND (meta->>'backtest') IS DISTINCT FROM 'true'
+              )
+            ORDER BY a.score DESC NULLS LAST
+            """,
+            {"skill": skill_id},
+        )
+        as_of = rows[0]["as_of"].isoformat() if rows and rows[0].get("as_of") else None
+        analysts.append({
+            "skill": skill_id,
+            "label": label,
+            "as_of": as_of,
+            "count": len(rows),
+            "picks": [
+                {
+                    "symbol": r["symbol"],
+                    "name": r.get("name"),
+                    "score": r.get("score"),
+                    "extra": {},
+                }
+                for r in rows
+            ],
+        })
+
+    try:
+        conn.rollback()  # 唯讀，無需 commit；結束交易並釋放連線
+    except Exception:
+        pass
+    conn.close()
+    return {"analysts": analysts}
+
+
+def _refresh_analyst_cache():
+    """背景重算快照；以 lock 確保同時只有一次重算。失敗則保留舊快照。"""
+    if not _ANALYST_LOCK.acquire(blocking=False):
+        return  # 已有重算進行中
+    try:
+        _ANALYST_CACHE["computing"] = True
+        result = _compute_analyst_picks()
+        _ANALYST_CACHE["data"] = result
+        _ANALYST_CACHE["ts"] = time.time()
+    except Exception:
+        # 重算失敗保留舊快照；不拋出（背景 thread）
+        pass
+    finally:
+        _ANALYST_CACHE["computing"] = False
+        _ANALYST_LOCK.release()
+
+
+def _analyst_refresh_loop():
+    """背景常駐：啟動時算一次，之後每 _ANALYST_REFRESH_SEC 重算一次。"""
+    while True:
+        _refresh_analyst_cache()
+        time.sleep(_ANALYST_REFRESH_SEC)
+
+
+@app.on_event("startup")
+def _start_analyst_refresher():
+    t = threading.Thread(target=_analyst_refresh_loop, daemon=True, name="analyst-refresher")
+    t.start()
+
+
+@app.get(
+    "/api/analyst-picks",
+    summary="5 位分析師各自最新推薦（個別列出）",
+    tags=["strategy"],
+    response_description="5 位分析師各自的最新推薦標的，含 0 檔時也回傳空 picks",
+)
+def analyst_picks(
+    refresh: bool = Query(default=False, description="觸發背景重算（非同步，立即回傳現有快照）"),
+):
+    """
+    回傳 5 位分析師各自最新一輪推薦：
+      1. strat-vcp        — VCP 突破（vcp_watchlist 最新 scan_date）
+      2. strat-5-10-20    — 5-10-20 順勢（v_strategy_latest buy）
+      3. strat-box        — 箱型區間（v_strategy_box_latest buy_signal）
+      4. baseline-momentum— 動能對照（analyses）
+      5. ml-logreg        — ML 預測（analyses）
+    每位分析師即使 0 檔也回 {count:0, picks:[]}，由前端顯示「今日無推薦」。
+
+    ⚠ 策略 view（v_strategy_latest/box）為全歷史掃描、可達數十秒，會把 DB CPU 打滿，
+    故此端點**永不在請求路徑同步計算**：由背景 thread 每 10 分鐘重算快照，端點立即回傳
+    最近一次快照。冷啟動快照尚未就緒時回 {stale:true, computing:true, analysts:[]}。
+    """
+    if refresh and not _ANALYST_CACHE["computing"]:
+        # 觸發一次背景重算（非阻塞），仍立即回傳現有快照
+        threading.Thread(target=_refresh_analyst_cache, daemon=True).start()
+
+    data = _ANALYST_CACHE["data"]
+    if data is None:
+        return {
+            "analysts": [],
+            "stale": True,
+            "computing": _ANALYST_CACHE["computing"],
+            "note": "snapshot 計算中，請稍候（背景首次計算策略 view 較久）",
+        }
+    age = time.time() - _ANALYST_CACHE["ts"]
+    return {**data, "stale": age > _ANALYST_REFRESH_SEC * 1.5, "as_of_epoch": _ANALYST_CACHE["ts"]}

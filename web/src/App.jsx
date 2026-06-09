@@ -3,7 +3,7 @@ import CandidatesPanel from './components/CandidatesPanel.jsx'
 import AccuracyPanel from './components/AccuracyPanel.jsx'
 import SkillsPanel from './components/SkillsPanel.jsx'
 import ChartPanel from './components/ChartPanel.jsx'
-import VcpWatchlistPanel from './components/VcpWatchlistPanel.jsx'
+import AnalystPicksPanel from './components/AnalystPicksPanel.jsx'
 import Header from './components/Header.jsx'
 
 const REFRESH_INTERVAL = 30 // seconds
@@ -18,8 +18,8 @@ export default function App() {
   const [candidates, setCandidates] = useState([])
   const [accuracy, setAccuracy] = useState([])
   const [skills, setSkills] = useState([])
-  const [vcpWatchlist, setVcpWatchlist] = useState([])
-  const [vcpScanDate, setVcpScanDate] = useState(null)
+  const [analysts, setAnalysts] = useState([])
+  const [analystsComputing, setAnalystsComputing] = useState(false)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState(null)
@@ -36,7 +36,7 @@ export default function App() {
       apiFetch('/api/candidates?market=TW&limit=20'),
       apiFetch('/api/accuracy'),
       apiFetch('/api/skills'),
-      apiFetch('/api/vcp-watchlist'),
+      apiFetch('/api/analyst-picks'),
     ])
 
     if (results[0].status === 'fulfilled') {
@@ -62,10 +62,10 @@ export default function App() {
     }
 
     if (results[3].status === 'fulfilled') {
-      setVcpWatchlist(results[3].value.data || [])
-      setVcpScanDate(results[3].value.scan_date || null)
+      setAnalysts(results[3].value.analysts || [])
+      setAnalystsComputing(!!results[3].value.computing)
     } else {
-      errs.vcpWatchlist = results[3].reason?.message
+      errs.analysts = results[3].reason?.message
     }
 
     setErrors(errs)
@@ -103,9 +103,23 @@ export default function App() {
       />
 
       <main className="p-4 max-w-screen-2xl mx-auto">
-        {/* Top row: Candidates + Accuracy */}
+        {/* 需求1：5 位分析師推薦（各自列出，含 VCP 區塊） */}
+        <div className="mb-4 fade-in fade-in-delay-1">
+          <AnalystPicksPanel
+            analysts={analysts}
+            loading={loading}
+            computing={analystsComputing}
+            error={errors.analysts}
+            onSelect={setSelectedSymbol}
+          />
+        </div>
+
+        {/* 需求2：個股日K查詢（含代號輸入） + 今日候選榜 */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
-          <div className="xl:col-span-2 fade-in fade-in-delay-1">
+          <div className="xl:col-span-2 fade-in fade-in-delay-2">
+            <ChartPanel symbol={selectedSymbol} />
+          </div>
+          <div className="fade-in fade-in-delay-3">
             <CandidatesPanel
               data={candidates}
               loading={loading}
@@ -114,37 +128,22 @@ export default function App() {
               onSelect={setSelectedSymbol}
             />
           </div>
-          <div className="fade-in fade-in-delay-2">
+        </div>
+
+        {/* 下方：三方準確率 + 技能績效 */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="fade-in fade-in-delay-4">
             <AccuracyPanel
               data={accuracy}
               loading={loading}
               error={errors.accuracy}
             />
           </div>
-        </div>
-
-        {/* Bottom row: Chart + Skills */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <div className="xl:col-span-2 fade-in fade-in-delay-3">
-            <ChartPanel symbol={selectedSymbol} />
-          </div>
           <div className="fade-in fade-in-delay-4">
             <SkillsPanel
               data={skills}
               loading={loading}
               error={errors.skills}
-            />
-          </div>
-        </div>
-
-        {/* VCP 突破監控（第五分析師） */}
-        <div className="grid grid-cols-1 gap-4 mt-4">
-          <div className="fade-in fade-in-delay-4">
-            <VcpWatchlistPanel
-              data={vcpWatchlist}
-              scanDate={vcpScanDate}
-              loading={loading}
-              error={errors.vcpWatchlist}
             />
           </div>
         </div>

@@ -13,6 +13,12 @@ async function fetchStrategy(symbol, limit = 120) {
   return res.json()
 }
 
+async function fetchSymbols() {
+  const res = await fetch('/api/symbols?limit=5000')
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 const RATING_COLORS = {
   buy: '#00ff88',
   watch: '#ffb800',
@@ -265,12 +271,37 @@ function buildChartOption(indicators, strategy, showStrategy) {
   }
 }
 
-export default function ChartPanel({ symbol }) {
+export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
   const [indicators, setIndicators] = useState([])
   const [strategy, setStrategy] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showStrategy, setShowStrategy] = useState(true)
+
+  // 個股查詢：本面板自管「目前顯示的代號」
+  const [activeSymbol, setActiveSymbol] = useState(symbol || defaultSymbol)
+  const [queryInput, setQueryInput] = useState(symbol || defaultSymbol)
+  const [symbolList, setSymbolList] = useState([])
+
+  // 外部（候選榜/分析師）點選時，同步到本面板
+  useEffect(() => {
+    if (symbol) {
+      setActiveSymbol(symbol)
+      setQueryInput(symbol)
+    }
+  }, [symbol])
+
+  // 載入 symbols 清單供 datalist 自動完成（端點不存在時靜默略過）
+  useEffect(() => {
+    fetchSymbols()
+      .then(r => setSymbolList(r.data || []))
+      .catch(() => setSymbolList([]))
+  }, [])
+
+  const submitQuery = useCallback(() => {
+    const v = (queryInput || '').trim()
+    if (v) setActiveSymbol(v)
+  }, [queryInput])
 
   const loadData = useCallback(async (sym) => {
     if (!sym) return
@@ -292,8 +323,8 @@ export default function ChartPanel({ symbol }) {
   }, [])
 
   useEffect(() => {
-    loadData(symbol)
-  }, [symbol, loadData])
+    loadData(activeSymbol)
+  }, [activeSymbol, loadData])
 
   const option = useMemo(
     () => buildChartOption(indicators, strategy, showStrategy),
@@ -317,14 +348,56 @@ export default function ChartPanel({ symbol }) {
     <div className="panel rounded-sm" style={{ minHeight: '460px' }}>
       <div className="p-4">
         {/* Header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="section-header text-sm flex-1">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div className="section-header text-sm">
             <span style={{ color: '#00d4ff' }}>◆</span>
-            標的詳情
-            {symbol && (
-              <span className="mono text-sm font-bold" style={{ color: '#e8f1ff' }}>{symbol}</span>
+            個股日K查詢
+            {activeSymbol && (
+              <span className="mono text-sm font-bold" style={{ color: '#e8f1ff' }}>{activeSymbol}</span>
             )}
           </div>
+
+          {/* 個股代號輸入框 + datalist 自動完成 */}
+          <div className="flex items-center gap-2">
+            <input
+              list="symbol-options"
+              value={queryInput}
+              onChange={(e) => setQueryInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitQuery() }}
+              placeholder="輸入代號 如 2330.TW"
+              spellCheck={false}
+              className="mono text-xs px-3 py-1 rounded-sm"
+              style={{
+                background: 'rgba(10,15,30,0.9)',
+                border: '1px solid #1f3060',
+                color: '#c8daf0',
+                width: '170px',
+                outline: 'none',
+              }}
+            />
+            <datalist id="symbol-options">
+              {symbolList.map((s) => (
+                <option key={s.symbol} value={s.symbol}>
+                  {s.name ? `${s.name} · ${s.market || ''}` : s.market || ''}
+                </option>
+              ))}
+            </datalist>
+            <button
+              onClick={submitQuery}
+              className="mono text-xs px-3 py-1 rounded-sm transition-colors"
+              style={{
+                background: 'rgba(0,212,255,0.12)',
+                border: '1px solid rgba(0,212,255,0.4)',
+                color: '#00d4ff',
+                cursor: 'pointer',
+              }}
+            >
+              查詢
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end mb-3 gap-4 flex-wrap">
 
           {/* Price summary */}
           {latest && (
@@ -395,10 +468,10 @@ export default function ChartPanel({ symbol }) {
           </div>
         )}
 
-        {!symbol ? (
+        {!activeSymbol ? (
           <div className="flex flex-col items-center justify-center" style={{ height: '360px' }}>
             <div className="mono text-2xl mb-2" style={{ color: '#1a2540' }}>◯</div>
-            <div className="mono text-xs" style={{ color: '#2a3a5a' }}>選擇候選榜標的以載入 K 線</div>
+            <div className="mono text-xs" style={{ color: '#2a3a5a' }}>輸入股票代號以載入日 K 線</div>
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center" style={{ height: '360px' }}>
