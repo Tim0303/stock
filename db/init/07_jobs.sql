@@ -19,8 +19,8 @@ BEGIN
   ),
   priced AS (
     SELECT d.*,
-      -- 到期日當天或之後第一個交易日的收盤（確保用真實的「未來」價，非 entry 附近）
-      (SELECT dp.close FROM daily_prices dp
+      -- 到期日當天或之後第一個交易日的「還原」收盤（× adj_factor，與還原後的 entry_price 同尺度）
+      (SELECT dp.close * dp.adj_factor FROM daily_prices dp
         WHERE dp.symbol = d.symbol AND dp.ts >= d.due_date
         ORDER BY dp.ts ASC LIMIT 1) AS exit_price
     FROM due d

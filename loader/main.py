@@ -220,6 +220,94 @@ def build_universe(tw_info, target):
     return selected
 
 
+# ── 還原權值（後復權：除權息日 adj_factor 跳升，消除市價跳空）──────────────
+def _f(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _valid_exdate(s):
+    return bool(s) and s not in ("", "0000-00-00", "1900-01-01")
+
+
+def fetch_dividend_events(sid):
+    """FinMind TaiwanStockDividend → [(ex_date_str, cash, stock_ratio)]。
+    現金股利 → 純除息事件；股票股利 → 純除權事件（配股率 = 股票股利元 / 10，面額10）。"""
+    events = []
+    try:
+        data = finmind_get("TaiwanStockDividend", data_id=sid, start_date="2010-01-01")
+    except Exception:
+        return events
+    for row in data:
+        cash = _f(row.get("CashEarningsDistribution")) + _f(row.get("CashStatutorySurplus"))
+        stock = _f(row.get("StockEarningsDistribution")) + _f(row.get("StockStatutorySurplus"))
+        ce, se = row.get("CashExDividendTradingDate"), row.get("StockExDividendTradingDate")
+        if cash > 0 and _valid_exdate(ce):
+            events.append((ce, cash, 0.0))
+        if stock > 0 and _valid_exdate(se):
+            events.append((se, 0.0, stock / 10.0))
+    return events
+
+
+def compute_adj_factor(cur, symbol):
+    """以原始相鄰收盤算每次除權息補償係數，後復權累乘 → 寫 daily_prices.adj_factor。
+    除息 ef = P_prev/(P_prev-cash)；除權 ef = 1+配股率；同日連乘。"""
+    cur.execute("SELECT ts, close FROM daily_prices WHERE symbol=%s AND close>0 ORDER BY ts", (symbol,))
+    rows = cur.fetchall()
+    if not rows:
+        return 0
+    dates = [r[0] for r in rows]
+    closes = {r[0]: float(r[1]) for r in rows}
+    ef_by_date = {}
+    for ex, cash, sr in fetch_dividend_events(symbol.split(".")[0]):
+        try:
+            exd = date.fromisoformat(ex)
+        except (ValueError, TypeError):
+            continue
+        prev = [d for d in dates if d < exd]
+        if not prev:
+            continue
+        pprev = closes[prev[-1]]
+        pref = (pprev - cash) / (1.0 + sr)
+        if pref <= 0:
+            continue
+        ef_by_date[exd] = ef_by_date.get(exd, 1.0) * (pprev / pref)
+    sorted_ex = sorted(ef_by_date)
+    updates, cum, ei = [], 1.0, 0
+    for d in dates:
+        while ei < len(sorted_ex) and sorted_ex[ei] <= d:
+            cum *= ef_by_date[sorted_ex[ei]]
+            ei += 1
+        updates.append((round(cum, 8), symbol, d))
+    execute_values(cur,
+        "UPDATE daily_prices AS dp SET adj_factor = v.f "
+        "FROM (VALUES %s) AS v(f, sym, ts) WHERE dp.symbol = v.sym AND dp.ts = v.ts::date",
+        updates)
+    return len(updates)
+
+
+def run_adjust():
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM symbols WHERE market='TW' ORDER BY symbol")
+    syms = [r[0] for r in cur.fetchall()]
+    print(f"還原權值：{len(syms)} 檔台股 ...")
+    for i, s in enumerate(syms, 1):
+        try:
+            n = compute_adj_factor(cur, s)
+            conn.commit()
+            print(f"[{i}/{len(syms)}] {s}: {n} 列")
+        except Exception as e:
+            conn.rollback()
+            print(f"[{i}/{len(syms)}] {s}: 失敗 {e}")
+        time.sleep(0.3)
+    cur.close()
+    conn.close()
+    print("還原完成")
+
+
 # ── main ───────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -227,7 +315,12 @@ def main():
     ap.add_argument("--universe", action="store_true")
     ap.add_argument("--target", type=int, default=55)
     ap.add_argument("--years", type=int, default=10)
+    ap.add_argument("--adjust", action="store_true", help="計算還原權值係數（FinMind 除權息）")
     args = ap.parse_args()
+
+    if args.adjust:
+        run_adjust()
+        return
 
     tw_info = {}
     if args.universe or any(s.endswith((".TW", ".TWO")) for s in args.symbols):
