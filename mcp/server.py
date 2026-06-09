@@ -429,6 +429,32 @@ def upsert_skill(family: str, params_json: str, notes: str = "") -> dict:
         return {"status": "error", "message": str(e)}
 
 
+@mcp.tool()
+def get_vcp_watchlist() -> dict:
+    """今日 VCP 突破監控清單（接近樞紐、收縮完成的 VCP 候選股）。
+
+    回傳最新 scan_date 的清單，依分數排序。
+    status='剛突破' 為可進場買點；'待突破'/'待突破(量縮)' 為接近樞紐、盯著等放量突破。
+    distance_pct 為距樞紐百分比（負=已突破、正=尚未突破）。
+    """
+    try:
+        rows = query_rows(
+            "SELECT scan_date, symbol, name, score, status, distance_pct, "
+            "       contraction_count, last_drawdown_pct, close, pivot "
+            "FROM vcp_watchlist "
+            "WHERE scan_date = (SELECT max(scan_date) FROM vcp_watchlist) "
+            "ORDER BY score DESC, distance_pct ASC"
+        )
+        return {
+            "scan_date": str(rows[0]["scan_date"]) if rows else None,
+            "count": len(rows),
+            "watchlist": rows,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e),
+                "hint": "vcp_watchlist 表可能尚未建立或當日無候選"}
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
