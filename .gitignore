@@ -1,0 +1,25 @@
+# 密鑰
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node / 前端
+node_modules/
+dist/
+.vite/
+
+# 資料/模型產物
+*.log
+ml/models/*.pkl
+data/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

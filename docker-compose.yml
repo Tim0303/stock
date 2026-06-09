@@ -1,0 +1,101 @@
+# 智能 AI 選股平台 — 服務編排（單一收口點，由 infra-agent 維護）
+# 契約（其他 service 的 agent 不得修改本檔的 port / service 名 / 網路）：
+#   port 7001 MCP / 7002 DB(host) / 7003 API / 7004 戰情儀表板
+#   一次性工具容器 loader / chiploader / ml 掛 profile=tools，預設不啟動
+#   用法：docker compose run --rm loader 2330.TW
+services:
+  # ── 資料地基：TimescaleDB（PG16 + TimescaleDB）────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: stock-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # 學習表/行情表的應用角色密碼，供 init SQL（T1）建立角色時使用
+      STOCK_APP_PASSWORD: ${STOCK_APP_PASSWORD}
+      STOCK_READONLY_PASSWORD: ${STOCK_READONLY_PASSWORD}
+    ports:
+      - "7002:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      # db/init 下的 *.sql 依檔名序在「首次初始化」時自動執行
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── AI 介面：FastMCP（stock-ai）— 角色 stock_app（可寫學習+行情，無 DELETE/DDL）──
+  mcp:
+    build: ./mcp
+    container_name: stock-mcp
+    environment:
+      DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+    ports:
+      - "7001:8000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 人介面後端：FastAPI 唯讀 REST — 角色 stock_readonly ──────────────────
+  api:
+    build: ./api
+    container_name: stock-api
+    environment:
+      DATABASE_URL: postgresql://stock_readonly:${STOCK_READONLY_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+    ports:
+      - "7003:8000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 戰情儀表板：React build → nginx，/api 反代到 api（同源免 CORS）─────────
+  web:
+    build: ./web
+    container_name: stock-web
+    ports:
+      - "7004:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ── 一次性工具容器（profile=tools，預設不啟動）──────────────────────────
+  # 行情 ingestion：docker compose run --rm loader 2330.TW AAPL
+  loader:
+    build: ./loader
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      FINMIND_TOKEN: ${FINMIND_TOKEN}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # 台股籌碼：docker compose run --rm chiploader 2330.TW
+  chiploader:
+    build: ./chiploader
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      FINMIND_TOKEN: ${FINMIND_TOKEN}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # ML：docker compose run --rm ml train   /   ml predict
+  ml:
+    build: ./ml
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+volumes:
+  timescale_data:

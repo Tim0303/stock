@@ -1,0 +1,284 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #030712;
+  --color-bunker: #0a0f1e;
+  --color-slate-dim: #0d1426;
+  --color-grid-line: #1a2540;
+  --color-muted: #1e2d4a;
+  --color-panel: #0f1932;
+  --color-panel-border: #1f3060;
+  --color-text-dim: #4a6080;
+  --color-text-mid: #8ba3c7;
+  --color-text-bright: #c8daf0;
+  --color-text-white: #e8f1ff;
+  --color-cyan-glow: #00d4ff;
+  --color-cyan-dim: #0099bb;
+  --color-green-signal: #00ff88;
+  --color-green-dim: #00aa55;
+  --color-amber-watch: #ffb800;
+  --color-amber-dim: #cc8800;
+  --color-red-danger: #ff3366;
+  --color-red-dim: #cc1144;
+  --color-gold: #ffd700;
+  --color-purple-accent: #7b5ea7;
+
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-display: 'Rajdhani', sans-serif;
+  --font-body: 'Noto Sans TC', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: #030712;
+  color: #c8daf0;
+  font-family: 'Noto Sans TC', sans-serif;
+  overflow-x: hidden;
+}
+
+/* Scanline overlay effect */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Subtle grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Panel styles */
+.panel {
+  background: #0f1932;
+  border: 1px solid #1f3060;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #00d4ff44, transparent);
+}
+
+/* Glow text */
+.glow-cyan {
+  text-shadow: 0 0 8px rgba(0, 212, 255, 0.8), 0 0 20px rgba(0, 212, 255, 0.4);
+}
+
+.glow-green {
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.8), 0 0 20px rgba(0, 255, 136, 0.4);
+}
+
+.glow-amber {
+  text-shadow: 0 0 8px rgba(255, 184, 0, 0.8);
+}
+
+/* Rating badges */
+.badge-buy {
+  background: rgba(0, 255, 136, 0.12);
+  border: 1px solid rgba(0, 255, 136, 0.4);
+  color: #00ff88;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  letter-spacing: 0.1em;
+}
+
+.badge-watch {
+  background: rgba(255, 184, 0, 0.12);
+  border: 1px solid rgba(255, 184, 0, 0.4);
+  color: #ffb800;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  letter-spacing: 0.1em;
+}
+
+.badge-skip {
+  background: rgba(74, 96, 128, 0.2);
+  border: 1px solid rgba(74, 96, 128, 0.4);
+  color: #4a6080;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  letter-spacing: 0.1em;
+}
+
+.badge-avoid {
+  background: rgba(255, 51, 102, 0.12);
+  border: 1px solid rgba(255, 51, 102, 0.4);
+  color: #ff3366;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  letter-spacing: 0.1em;
+}
+
+/* Section header line */
+.section-header {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #00d4ff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-header::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, #00d4ff33, transparent);
+}
+
+/* Ticker-style mono text */
+.mono {
+  font-family: 'Share Tech Mono', monospace;
+}
+
+/* Animated pulse dot */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.pulse-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #00ff88;
+  border-radius: 50%;
+}
+
+.pulse-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #00ff88;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Score bar */
+.score-bar-bg {
+  background: rgba(26, 37, 64, 0.8);
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #00d4ff, #00ff88);
+  transition: width 0.6s ease;
+}
+
+/* Table row hover */
+tr.candidate-row {
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+
+tr.candidate-row:hover {
+  background: rgba(0, 212, 255, 0.05);
+}
+
+tr.candidate-row.selected {
+  background: rgba(0, 212, 255, 0.08);
+  border-left: 2px solid #00d4ff;
+}
+
+/* Stat card glow on hover */
+.stat-card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(0, 212, 255, 0.4);
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.08);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0f1e;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f3060;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #00d4ff44;
+}
+
+/* Fade-in animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeInUp 0.4s ease forwards;
+}
+
+.fade-in-delay-1 { animation-delay: 0.1s; opacity: 0; }
+.fade-in-delay-2 { animation-delay: 0.2s; opacity: 0; }
+.fade-in-delay-3 { animation-delay: 0.3s; opacity: 0; }
+.fade-in-delay-4 { animation-delay: 0.4s; opacity: 0; }
+
+/* Corner decorations */
+.corner-tl::before,
+.corner-tl::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+}
+.corner-tl::before {
+  width: 12px; height: 1px;
+  background: #00d4ff;
+}
+.corner-tl::after {
+  width: 1px; height: 12px;
+  background: #00d4ff;
+}
+
+/* Refresh countdown */
+.countdown-ring {
+  stroke-dasharray: 50.27;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 1s linear;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
