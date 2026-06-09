@@ -80,12 +80,14 @@ def _num(x):
     return None if pd.isna(x) else float(x)
 
 
+# ── 台股歷史日線：FinMind TaiwanStockPrice（單檔 data_id 一次抓全範圍）──
 def start_date_for(years):
     return (date.today() - timedelta(days=int(years * 365.25))).isoformat()
 
 
 def fetch_prices_finmind(sid, years):
-    """台股日線走 FinMind TaiwanStockPrice（單一可靠來源，台股 yfinance 不穩）"""
+    """台股日線走 FinMind TaiwanStockPrice。
+    註：close=0 代表當日「暫停交易」（停牌），由 upsert_prices 的 close>0 過濾排除。"""
     data = finmind_get("TaiwanStockPrice", data_id=sid, start_date=start_date_for(years))
     if not data:
         return None
@@ -127,11 +129,21 @@ def upsert_symbol(cur, symbol, name, market, industry, is_wl):
     """, (symbol, name, market, industry, is_wl))
 
 
+def _pos(x):
+    v = _num(x)
+    return v if (v is not None and v > 0) else None
+
+
 def upsert_prices(cur, symbol, df):
+    # 排除停牌日：close=0 代表當日「暫停交易」（無有效收盤），不應進均線/回測；
+    # open/high/low <= 0 轉 NULL。
     rows = [(symbol, r.Date.date() if hasattr(r.Date, "date") else r.Date,
-             _num(r.Open), _num(r.High), _num(r.Low), _num(r.Close),
+             _pos(r.Open), _pos(r.High), _pos(r.Low), _num(r.Close),
              None if pd.isna(r.Volume) else int(r.Volume))
-            for r in df.itertuples(index=False)]
+            for r in df.itertuples(index=False)
+            if not pd.isna(r.Close) and float(r.Close) > 0]
+    if not rows:
+        return 0
     execute_values(cur, """
         INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume)
         VALUES %s
@@ -147,7 +159,7 @@ def ingest(cur, yf_ticker, tw_info, years, is_wl=False):
         sid = yf_ticker.split(".")[0]
         meta = tw_info.get(sid, {})
         name, industry, market = meta.get("name"), meta.get("industry"), "TW"
-        df = fetch_prices_finmind(sid, years)
+        df = fetch_prices_finmind(sid, years)       # 台股上市/上櫃 → FinMind
     else:
         name, industry, market = None, None, "US"
         df = fetch_prices_yf(yf_ticker, years)
