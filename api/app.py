@@ -346,3 +346,45 @@ def chips(
         raise HTTPException(status_code=500, detail=str(exc))
 
     return {"symbol": symbol, "count": len(rows), "data": rows}
+
+
+# ── /api/vcp-watchlist ────────────────────────────────────────────────────────
+@app.get(
+    "/api/vcp-watchlist",
+    summary="VCP 突破監控清單（第五分析師）",
+    tags=["strategy"],
+    response_description="最新 scan_date 的 VCP 候選監控清單，依 score 排序",
+)
+def vcp_watchlist():
+    """
+    讀 `vcp_watchlist` 表的**最新 scan_date** 清單，依 score DESC 排序。
+    由 vcp watchlist 子命令寫入；表不存在時回空陣列（容錯）。
+    回傳：{scan_date, count, data:[...]}。
+    """
+    try:
+        conn = get_conn()
+        has_table = table_exists(conn, "vcp_watchlist")
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB error: {exc}")
+
+    if not has_table:
+        return {"scan_date": None, "count": 0, "data": [],
+                "note": "vcp_watchlist table not yet available"}
+
+    try:
+        rows = query(
+            """
+            SELECT
+                scan_date, symbol, name, close, pivot, distance_pct,
+                contraction_count, last_drawdown_pct, score, status, vol_dry
+            FROM vcp_watchlist
+            WHERE scan_date = (SELECT max(scan_date) FROM vcp_watchlist)
+            ORDER BY score DESC NULLS LAST, distance_pct ASC
+            """
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    scan_date = rows[0]["scan_date"] if rows else None
+    return {"scan_date": scan_date, "count": len(rows), "data": rows}

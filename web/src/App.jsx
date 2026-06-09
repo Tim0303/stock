@@ -3,6 +3,7 @@ import CandidatesPanel from './components/CandidatesPanel.jsx'
 import AccuracyPanel from './components/AccuracyPanel.jsx'
 import SkillsPanel from './components/SkillsPanel.jsx'
 import ChartPanel from './components/ChartPanel.jsx'
+import VcpWatchlistPanel from './components/VcpWatchlistPanel.jsx'
 import Header from './components/Header.jsx'
 
 const REFRESH_INTERVAL = 30 // seconds
@@ -17,6 +18,8 @@ export default function App() {
   const [candidates, setCandidates] = useState([])
   const [accuracy, setAccuracy] = useState([])
   const [skills, setSkills] = useState([])
+  const [vcpWatchlist, setVcpWatchlist] = useState([])
+  const [vcpScanDate, setVcpScanDate] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState(null)
@@ -33,6 +36,7 @@ export default function App() {
       apiFetch('/api/candidates?market=TW&limit=20'),
       apiFetch('/api/accuracy'),
       apiFetch('/api/skills'),
+      apiFetch('/api/vcp-watchlist'),
     ])
 
     if (results[0].status === 'fulfilled') {
@@ -55,6 +59,13 @@ export default function App() {
       setSkills(results[2].value.data || [])
     } else {
       errs.skills = results[2].reason?.message
+    }
+
+    if (results[3].status === 'fulfilled') {
+      setVcpWatchlist(results[3].value.data || [])
+      setVcpScanDate(results[3].value.scan_date || null)
+    } else {
+      errs.vcpWatchlist = results[3].reason?.message
     }
 
     setErrors(errs)
@@ -122,6 +133,18 @@ export default function App() {
               data={skills}
               loading={loading}
               error={errors.skills}
+            />
+          </div>
+        </div>
+
+        {/* VCP 突破監控（第五分析師） */}
+        <div className="grid grid-cols-1 gap-4 mt-4">
+          <div className="fade-in fade-in-delay-4">
+            <VcpWatchlistPanel
+              data={vcpWatchlist}
+              scanDate={vcpScanDate}
+              loading={loading}
+              error={errors.vcpWatchlist}
             />
           </div>
         </div>

@@ -378,6 +378,67 @@ def _report_backtest(trades):
 # --------------------------------------------------------------------------- #
 # watchlist — 今日「VCP 候選監控清單」（接近突破、該盯的；不寫 analyses，純監控）
 # --------------------------------------------------------------------------- #
+_WATCHLIST_UPSERT_SQL = """
+    INSERT INTO vcp_watchlist
+        (scan_date, symbol, name, close, pivot, distance_pct,
+         contraction_count, last_drawdown_pct, score, status, vol_dry)
+    VALUES
+        (%(scan_date)s, %(symbol)s, %(name)s, %(close)s, %(pivot)s, %(distance_pct)s,
+         %(contraction_count)s, %(last_drawdown_pct)s, %(score)s, %(status)s, %(vol_dry)s)
+    ON CONFLICT (scan_date, symbol) DO UPDATE SET
+        name              = EXCLUDED.name,
+        close             = EXCLUDED.close,
+        pivot             = EXCLUDED.pivot,
+        distance_pct      = EXCLUDED.distance_pct,
+        contraction_count = EXCLUDED.contraction_count,
+        last_drawdown_pct = EXCLUDED.last_drawdown_pct,
+        score             = EXCLUDED.score,
+        status            = EXCLUDED.status,
+        vol_dry           = EXCLUDED.vol_dry,
+        created_at        = now()
+"""
+
+
+def _watchlist_status(row):
+    """中文狀態：剛突破 / 待突破(量縮) / 待突破。"""
+    if row["breakout"]:
+        return "剛突破"
+    if row["vol_dry"]:
+        return "待突破(量縮)"
+    return "待突破"
+
+
+def _persist_watchlist(conn, scan_date, rows):
+    """寫入 vcp_watchlist 表（upsert）。表不存在或寫入失敗時不影響原本印出。"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('vcp_watchlist')")
+            if cur.fetchone()[0] is None:
+                print("[watchlist] vcp_watchlist 表不存在，略過寫入（請先套用 15_vcp_watchlist.sql）",
+                      file=sys.stderr)
+                return
+            payload = [{
+                "scan_date": scan_date,
+                "symbol": r["symbol"],
+                "name": r["name"] or None,
+                "close": r["close"],
+                "pivot": r["pivot"],
+                "distance_pct": r["dist"],
+                "contraction_count": r["nc"],
+                "last_drawdown_pct": r["last_dd"],
+                "score": r["score"],
+                "status": _watchlist_status(r),
+                "vol_dry": bool(r["vol_dry"]),
+            } for r in rows]
+            if payload:
+                cur.executemany(_WATCHLIST_UPSERT_SQL, payload)
+        conn.commit()
+        print(f"[watchlist] 已寫入 vcp_watchlist：{scan_date} {len(rows)} 檔")
+    except Exception as exc:
+        conn.rollback()
+        print(f"[watchlist] 寫入 vcp_watchlist 失敗（不影響掃描輸出）：{exc}", file=sys.stderr)
+
+
 def cmd_watchlist(target_date=None):
     conn = get_conn()
     try:
@@ -413,6 +474,10 @@ def cmd_watchlist(target_date=None):
                     "score": round(res.score, 1),
                 })
         rows.sort(key=lambda r: (-r["score"], r["dist"]))
+
+        # 寫入 vcp_watchlist 表（展示快照）：先刪該 scan_date 舊列，再 upsert。
+        _persist_watchlist(conn, max_ts.date(), rows)
+
         print(f"[watchlist] {max_ts.date()} VCP 候選監控清單：{len(rows)} 檔（接近突破、該盯的）")
         print(f"{'symbol':<10}{'close':>9}{'pivot':>9}{'dist%':>8}{'nc':>4}{'lastDD%':>9}{'score':>7}  status  name")
         for r in rows:
