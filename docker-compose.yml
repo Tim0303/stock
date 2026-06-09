@@ -97,5 +97,15 @@ services:
       timescaledb:
         condition: service_healthy
 
+  # VCP（第五分析師）：docker compose run --rm vcp scan   /   vcp backtest
+  vcp:
+    build: ./vcp
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
 volumes:
   timescale_data:
