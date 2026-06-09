@@ -84,7 +84,7 @@ VALUES (
     'w_bull_align', 30, 'w_above_ma5', 20, 'w_breakout_5d_high', 20, 'w_volume', 15, 'w_ma20_up', 15,
     'enter_threshold', 80, 'watch_threshold', 60,
     'bias_ma20_max', 0.12, 'bias_ma10_max', 0.08, 'vol_ratio_min', 1.0,
-    'enable_signal_A', true, 'enable_signal_B', true, 'enable_signal_C', true, 'pullback_vol_cap', 1.5,
+    'enable_signal_A', true, 'enable_signal_B', false, 'enable_signal_C', true, 'pullback_vol_cap', 1.5,
     'horizon_days', 5, 'exit_on_break_ma5', 'half', 'chip_overlay', false
   ),
   'seed-v1', 'system', '5-10-20 短線策略文件預設參數（冠軍基準，演化前凍結）'

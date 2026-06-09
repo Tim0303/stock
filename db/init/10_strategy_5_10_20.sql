@@ -68,7 +68,8 @@ SELECT
   CASE WHEN sig_a THEN 'A' WHEN sig_b THEN 'B' WHEN sig_c THEN 'C' END AS signal_type,
   CASE
     WHEN filtered THEN 'avoid'
-    WHEN ( CASE WHEN bull_align THEN w_bull ELSE 0 END
+    WHEN (sig_a OR sig_b OR sig_c)   -- 進場品質：必須觸發真 A/B/C 訊號（非僅結構強）
+         AND ( CASE WHEN bull_align THEN w_bull ELSE 0 END
          + CASE WHEN close > ma5 THEN w_ma5 ELSE 0 END
          + CASE WHEN close > prev_high_5 THEN w_brk ELSE 0 END
          + CASE WHEN volume > vol_ma5 * volmin THEN w_vol ELSE 0 END
