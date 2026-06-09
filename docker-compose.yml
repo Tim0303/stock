@@ -107,5 +107,18 @@ services:
       timescaledb:
         condition: service_healthy
 
+  # 每日排程（常駐，依附專案；掛 docker socket，crond 每天 15:00 TPE 觸發每日流程）
+  scheduler:
+    build: ./scheduler
+    container_name: stock-scheduler
+    environment:
+      STOCK_APP_PASSWORD: ${STOCK_APP_PASSWORD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
 volumes:
   timescale_data:
