@@ -44,7 +44,12 @@ const MA_CONFIG = [
   { key: 'ma20', name: 'MA20', color: '#00d4ff' },
 ]
 
-function buildChartOption(indicators, strategy, showStrategy, maVisible) {
+// 布林通道：中軌 = MA20，上下軌 = 中軌 ± 2σ（σ = 20 日收盤母體標準差），通道色靛
+const BB_COLOR = '#818cf8'
+const BB_PERIOD = 20
+const BB_K = 2
+
+function buildChartOption(indicators, strategy, showStrategy, maVisible, showBB) {
   if (!indicators || indicators.length === 0) return null
 
   // Sort chronologically
@@ -65,6 +70,27 @@ function buildChartOption(indicators, strategy, showStrategy, maVisible) {
   const ma5 = sorted.map(d => d.ma5 != null ? +d.ma5.toFixed(2) : null)
   const ma10 = sorted.map(d => d.ma10 != null ? +d.ma10.toFixed(2) : null)
   const ma20 = sorted.map(d => d.ma20 != null ? +d.ma20.toFixed(2) : null)
+
+  // 布林通道上下軌（中軌沿用 MA20；σ 以中軌為中心，使通道恰好對稱於畫出的 MA20 線）
+  const closes = sorted.map(d => (d.close != null ? +d.close : null))
+  const bbUpper = []
+  const bbLower = []
+  for (let i = 0; i < sorted.length; i++) {
+    const mid = ma20[i]
+    if (i < BB_PERIOD - 1 || mid == null) { bbUpper.push(null); bbLower.push(null); continue }
+    let sum = 0, ok = true
+    for (let k = i - BB_PERIOD + 1; k <= i; k++) {
+      const c = closes[k]
+      if (c == null) { ok = false; break }
+      sum += (c - mid) * (c - mid)
+    }
+    if (!ok) { bbUpper.push(null); bbLower.push(null); continue }
+    const sd = Math.sqrt(sum / BB_PERIOD)
+    bbUpper.push(+(mid + BB_K * sd).toFixed(2))
+    bbLower.push(+(mid - BB_K * sd).toFixed(2))
+  }
+  // 通道填色用「下軌 + 厚度」堆疊（隱形線、只留 area）；上下軌另以實值虛線畫，tooltip 顯示真值
+  const bbThickness = bbUpper.map((u, i) => (u == null || bbLower[i] == null ? null : +(u - bbLower[i]).toFixed(2)))
 
   // Strategy signal markers（A/C 進場訊號：放 K 棒下方、向上箭頭＝買點）
   const markPoints = []
@@ -124,6 +150,10 @@ function buildChartOption(indicators, strategy, showStrategy, maVisible) {
             html += `<div style="color:${color}">O:${o} H:${h} L:${l} C:${c}</div>`
             html += `<div style="color:${color}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${pct}%)</div>`
           } else if (p.seriesName && p.seriesName.startsWith('MA')) {
+            if (p.value != null) {
+              html += `<div><span style="color:${p.color}">${p.seriesName}</span> ${p.value}</div>`
+            }
+          } else if (p.seriesName && p.seriesName.startsWith('布林')) {
             if (p.value != null) {
               html += `<div><span style="color:${p.color}">${p.seriesName}</span> ${p.value}</div>`
             }
@@ -247,6 +277,30 @@ function buildChartOption(indicators, strategy, showStrategy, maVisible) {
           },
         } : undefined,
       },
+      // 布林通道：填色（下軌+厚度堆疊，隱形線）+ 上下軌虛線（實值，供 tooltip）
+      ...(showBB ? [
+        {
+          name: '_bbBase', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+          data: bbLower, stack: 'bb', symbol: 'none',
+          lineStyle: { opacity: 0 }, z: 2, silent: true, tooltip: { show: false },
+        },
+        {
+          name: '_bbFill', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+          data: bbThickness, stack: 'bb', symbol: 'none',
+          lineStyle: { opacity: 0 }, areaStyle: { color: 'rgba(129,140,248,0.07)' },
+          z: 2, silent: true, tooltip: { show: false },
+        },
+        {
+          name: '布林上軌', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+          data: bbUpper, symbol: 'none',
+          lineStyle: { color: BB_COLOR, width: 1, opacity: 0.6, type: 'dashed' }, z: 3,
+        },
+        {
+          name: '布林下軌', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+          data: bbLower, symbol: 'none',
+          lineStyle: { color: BB_COLOR, width: 1, opacity: 0.6, type: 'dashed' }, z: 3,
+        },
+      ] : []),
       // 均線：依 MA_CONFIG 順序，只畫「開關開啟」的那幾條
       ...MA_CONFIG.filter(m => !maVisible || maVisible[m.key]).map(m => ({
         name: m.name,
@@ -282,6 +336,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
   const [showStrategy, setShowStrategy] = useState(true)
   // 均線開關（預設全開）
   const [maVisible, setMaVisible] = useState({ ma5: true, ma10: true, ma20: true })
+  // 布林通道開關（預設開）
+  const [showBB, setShowBB] = useState(true)
 
   // 個股查詢：本面板自管「目前顯示的代號」
   const [activeSymbol, setActiveSymbol] = useState(symbol || defaultSymbol)
@@ -332,8 +388,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
   }, [activeSymbol, loadData])
 
   const option = useMemo(
-    () => buildChartOption(indicators, strategy, showStrategy, maVisible),
-    [indicators, strategy, showStrategy, maVisible]
+    () => buildChartOption(indicators, strategy, showStrategy, maVisible, showBB),
+    [indicators, strategy, showStrategy, maVisible, showBB]
   )
 
   // Latest price info
@@ -464,6 +520,16 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
               </button>
             )
           })}
+          {/* 布林通道開關 */}
+          <button
+            onClick={() => setShowBB(v => !v)}
+            className="flex items-center gap-1 mono text-xs"
+            style={{ cursor: 'pointer', background: 'transparent', border: 'none', padding: 0, opacity: showBB ? 1 : 0.35 }}
+            title={showBB ? '點擊隱藏布林通道' : '點擊顯示布林通道'}
+          >
+            <div style={{ width: 16, height: 2, background: showBB ? BB_COLOR : '#4a6080', borderRadius: 1, borderTop: showBB ? `1px dashed ${BB_COLOR}` : 'none' }} />
+            <span style={{ color: showBB ? BB_COLOR : '#4a6080', textDecoration: showBB ? 'none' : 'line-through' }}>布林(20,2)</span>
+          </button>
           {latest && (
             <>
               <div className="ml-2 flex items-center gap-1">
