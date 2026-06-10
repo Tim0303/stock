@@ -19,9 +19,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > **分析師現況（共用 `analyses`、同台比較）**：儀表板 5 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
 > `strat-bb-trend`(布林通道趨勢續抱) / `ml-logreg`。
-> ★ `strat-bb-trend` = **5-10-20 進場 + 趨勢續抱出場**（站上20MA續抱／跌破20MA出／−8%停損／maxhold60）。與 5-10-20 共用進場，
+> ★ `strat-bb-trend` = **5-10-20 進場 + 趨勢續抱出場**（站上20MA續抱／跌破20MA停利／−8%停損／**無時間上限**，2026-06-10 移除原 maxhold60）。與 5-10-20 共用進場，
 >   故**不走 bracket 評分**：主 `evaluate_due_predictions()` 已 `AND skill<>'strat-bb-trend'` 排除，改由 `evaluate_bb_trend()` 評分。
->   實證：per-signal 期望值≈5-10-20（PF1.34 vs 1.33），但勝率低(32% vs 56%)、上檔不封頂(肥尾單撐滿60天 avg+73%)；5槽位組合報酬大幅領先靠肥尾複利、變異大。
+>   實證：per-signal 期望值≈5-10-20（PF1.37 vs 1.33），但勝率低(32% vs 56%)、上檔不封頂(肥尾單沿20MA走大波段)；5槽位組合報酬大幅領先(836筆win33%+187萬)靠肥尾複利、變異大。
 > **已退役**：`baseline-momentum`（純對照無用）、`strat-box`（長期 PF≈1.0）——view/資料保留、僅從 API/記錄/snapshot 移除，**勿再加回**。
 >
 > **評分 = TP/SL bracket（非固定 horizon）**：`evaluate_due_predictions()`（`19_bracket_scoring.sql`）對每筆預測，
