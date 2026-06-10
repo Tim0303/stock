@@ -189,7 +189,7 @@ def accuracy():
             """
             SELECT skill, n_evaluated, win_rate, avg_return, profit_factor
             FROM v_skill_performance
-            WHERE skill <> 'baseline-momentum'   -- 動能對照已移除（純對照、無實用價值）
+            WHERE skill NOT IN ('baseline-momentum','strat-box')  -- 已退役分析師
             ORDER BY win_rate DESC NULLS LAST
             """
         )
@@ -288,7 +288,7 @@ def skills():
                 payoff_ratio, sharpe_like, max_drawdown, oos_win_rate,
                 last_evaluated_at, created_by, notes, created_at
             FROM skills
-            WHERE family <> 'baseline-momentum'   -- 動能對照已移除（純對照、無實用價值）
+            WHERE family NOT IN ('baseline-momentum','strat-box')  -- 已退役分析師
             ORDER BY family, version DESC
             """
         )
@@ -562,38 +562,9 @@ def _compute_analyst_picks() -> dict:
         ],
     })
 
-    # ── 3. strat-box ──────────────────────────────────────────────────────────
-    box_rows = _safe_picks(
-        conn,
-        "v_strategy_box_latest",
-        """
-        SELECT l.symbol, sy.name, l.score, l.ts AS as_of
-        FROM v_strategy_box_latest l
-        JOIN symbols sy USING (symbol)
-        WHERE l.buy_signal
-          AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
-          AND market_ok_now()
-        ORDER BY l.score DESC NULLS LAST
-        """,
-    )
-    box_as_of = box_rows[0]["as_of"].isoformat() if box_rows and box_rows[0].get("as_of") else None
-    analysts.append({
-        "skill": "strat-box",
-        "label": "箱型區間",
-        "as_of": box_as_of,
-        "count": len(box_rows),
-        "picks": [
-            {
-                "symbol": r["symbol"],
-                "name": r.get("name"),
-                "score": r.get("score"),
-                "extra": {},
-            }
-            for r in box_rows
-        ],
-    })
+    # ── strat-box 已退役（長期 PF≈1.0、擴樣後走弱，使用者決定移除；view/資料保留）──
 
-    # ── 4. 破支撐拉回 strat-spring（v_support_reclaim_latest）──────────────────
+    # ── 破支撐拉回 strat-spring（v_support_reclaim_latest）──────────────────
     spring_rows = _safe_picks(
         conn,
         "v_support_reclaim_latest",

@@ -23,9 +23,9 @@ echo "記錄當日推薦 (analyses) ..."
 docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-vcp scan 2>&1 | tail -1
 #   4b. ML 預測（Python；無模型則就地訓練）
 docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-ml predict 2>&1 | tail -1
-#   4c. 5-10-20 / 箱型 / 破支撐拉回 買進訊號（DB function，live + 防重）
+#   4c. 5-10-20 / 破支撐拉回 買進訊號（DB function，live + 防重；box 已退役）
 docker exec stock-timescaledb psql -U stock_admin -d stockdb \
-    -c "SELECT record_strategy_signals();" -c "SELECT record_box_signals();" \
+    -c "SELECT record_strategy_signals();" \
     -c "SELECT record_spring_signals();"
 
 # 5. 每日推薦快照（所見即所記，含 VCP 醞釀中）→ daily_recommendations（供前向報酬驗證）

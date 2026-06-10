@@ -55,17 +55,7 @@ BEGIN
     target_price = EXCLUDED.target_price, stop_price = EXCLUDED.stop_price;
   GET DIAGNOSTICS n = ROW_COUNT; v_total := v_total + n;
 
-  -- 2b) 箱型區間（買進）
-  INSERT INTO daily_recommendations (rec_date, skill, symbol, name, score, status, entry_price)
-  SELECT l.ts, 'strat-box', l.symbol, sy.name, l.score, 'box-buy', round(l.close, 2)
-  FROM v_strategy_box_latest l
-  JOIN symbols sy USING (symbol)
-  WHERE l.rating = 'buy'
-    AND l.ts >= v_max - INTERVAL '5 days'
-  ON CONFLICT (rec_date, skill, symbol) DO UPDATE SET
-    name = EXCLUDED.name, score = EXCLUDED.score,
-    status = EXCLUDED.status, entry_price = EXCLUDED.entry_price;
-  GET DIAGNOSTICS n = ROW_COUNT; v_total := v_total + n;
+  -- 2b) 箱型區間 strat-box 已退役（長期 PF≈1.0，使用者決定移除）。
 
   -- 2c) VCP（醞釀中/待突破/剛突破，取最新近期 scan_date）
   IF to_regclass('vcp_watchlist') IS NOT NULL THEN

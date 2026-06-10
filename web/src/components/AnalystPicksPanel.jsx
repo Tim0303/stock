@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 // 每位分析師一個主題色，做視覺區分
 const ANALYST_THEME = {
@@ -51,7 +51,7 @@ function ExtraCell({ skill, extra }) {
   if (skill === 'strat-vcp') {
     const isBreakout = extra.status === '剛突破'
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2">
         <span
           className="px-1.5 py-0.5 rounded-sm text-xs"
           style={{
@@ -78,13 +78,25 @@ function ExtraCell({ skill, extra }) {
   return <span className="mono text-xs" style={{ color: '#1e2d4a' }}>—</span>
 }
 
-function AnalystCard({ analyst, onSelect }) {
+function AnalystCard({ analyst, onSelect, expanded = false }) {
   const theme = ANALYST_THEME[analyst.skill] || DEFAULT_THEME
   const accent = theme.accent
-  const hasExtra = analyst.skill === 'strat-vcp' || analyst.skill === 'strat-5-10-20' || analyst.skill === 'strat-spring'
-  const extraHeader = analyst.skill === 'strat-vcp' ? '狀態 / 距樞紐'
-    : (analyst.skill === 'strat-5-10-20' || analyst.skill === 'strat-spring') ? '目標 / 停損'
-    : null
+  const fmtP = (v, d = 1) => (v === null || v === undefined ? '—' : fmtNum(v, d))
+  const planCols =
+    (analyst.skill === 'strat-5-10-20' || analyst.skill === 'strat-spring') ? [
+      { header: '進場', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmtP(p.extra?.entry_price)}</span> },
+      { header: '目標', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#00ff88' }}>{fmtP(p.extra?.target_price)}</span> },
+      { header: '目標%', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{p.extra?.target_pct != null ? `+${fmtNum(p.extra.target_pct, 1)}%` : '—'}</span> },
+      { header: '停損', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#ff6b81' }}>{fmtP(p.extra?.stop_price)}</span> },
+    ] : analyst.skill === 'strat-vcp' ? [
+      { header: '狀態', align: 'left', cell: (p) => <ExtraCell skill={analyst.skill} extra={p.extra} /> },
+    ] : []
+  const columns = [
+    { header: '代號', align: 'left', cell: (p) => <span className="mono text-sm font-bold" style={{ color: '#c8daf0' }}>{p.symbol}</span> },
+    { header: '名稱', align: 'left', cell: (p) => <span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.82rem' }}>{p.name || '—'}</span> },
+    { header: '分數', align: 'right', cell: (p) => <ScoreCell score={p.score} accent={accent} /> },
+    ...planCols,
+  ]
 
   return (
     <div
@@ -124,16 +136,13 @@ function AnalystCard({ analyst, onSelect }) {
             </div>
           </div>
         ) : (
-          <div className="overflow-auto flex-1" style={{ maxHeight: '240px' }}>
+          <div className="overflow-auto flex-1" style={{ maxHeight: '212px' }}>
             <table className="w-full text-sm">
               <thead style={{ position: 'sticky', top: 0, background: '#0a1020', zIndex: 1 }}>
                 <tr style={{ borderBottom: '1px solid #1a2540' }}>
-                  <th className="mono text-left pb-1.5 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>
-                  <th className="mono text-left pb-1.5 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>名稱</th>
-                  <th className="mono text-right pb-1.5 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分數</th>
-                  {hasExtra && (
-                    <th className="mono text-left pb-1.5 pl-3 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>{extraHeader}</th>
-                  )}
+                  {columns.map((c, i) => (
+                    <th key={i} className="mono pb-1.5 text-xs text-center" style={{ color: '#4a6080', fontWeight: 400 }}>{c.header}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -144,20 +153,9 @@ function AnalystCard({ analyst, onSelect }) {
                     style={{ borderBottom: '1px solid #0d1426', cursor: onSelect ? 'pointer' : 'default' }}
                     onClick={onSelect ? () => onSelect(p.symbol) : undefined}
                   >
-                    <td className="py-2 px-1">
-                      <span className="mono text-sm font-bold" style={{ color: '#c8daf0' }}>{p.symbol}</span>
-                    </td>
-                    <td className="py-2 px-1">
-                      <span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.82rem' }}>{p.name || '—'}</span>
-                    </td>
-                    <td className="py-2 px-1 text-right">
-                      <ScoreCell score={p.score} accent={accent} />
-                    </td>
-                    {hasExtra && (
-                      <td className="py-2 px-1 pl-3">
-                        <ExtraCell skill={analyst.skill} extra={p.extra} />
-                      </td>
-                    )}
+                    {columns.map((c, i) => (
+                      <td key={i} className="py-2 px-1 text-center">{c.cell(p)}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -185,6 +183,46 @@ function MarketBadge({ market }) {
     >
       {ok ? '◉' : '◯'} 大盤寬度 {market.breadth_pct}% {ok ? '健康' : '偏弱·暫不開倉'}
     </span>
+  )
+}
+
+// 分析師 tab 切換：上方 tab 列、下方顯示選中分析師推薦表
+function AnalystTabs({ analysts, onSelect }) {
+  const [activeSkill, setActiveSkill] = useState(null)
+  const active = analysts.find((a) => a.skill === activeSkill) || analysts[0]
+  if (!active) return null
+  return (
+    <div>
+      <div className="flex gap-1.5 mb-3 flex-wrap">
+        {analysts.map((a) => {
+          const theme = ANALYST_THEME[a.skill] || DEFAULT_THEME
+          const isActive = a.skill === active.skill
+          return (
+            <button
+              key={a.skill}
+              onClick={() => setActiveSkill(a.skill)}
+              className="mono text-xs px-3 py-1.5 rounded-sm flex items-center gap-2 transition-colors"
+              style={{
+                cursor: 'pointer',
+                background: isActive ? `${theme.glow},0.14)` : 'rgba(15,25,50,0.5)',
+                border: `1px solid ${isActive ? `${theme.glow},0.55)` : '#1a2540'}`,
+                borderBottom: `2px solid ${isActive ? theme.accent : '#1a2540'}`,
+                color: isActive ? theme.accent : '#8ba3c7',
+              }}
+            >
+              <span style={{ fontFamily: 'Noto Sans TC', fontWeight: isActive ? 700 : 400 }}>{a.label}</span>
+              <span
+                className="px-1.5 rounded-sm"
+                style={{ background: isActive ? `${theme.glow},0.18)` : 'rgba(0,0,0,0.25)', color: isActive ? theme.accent : '#4a6080' }}
+              >
+                {a.count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <AnalystCard analyst={active} onSelect={onSelect} expanded />
+    </div>
   )
 }
 
@@ -217,11 +255,7 @@ export default function AnalystPicksPanel({ analysts = [], loading, computing, e
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-          {analysts.map((a) => (
-            <AnalystCard key={a.skill} analyst={a} onSelect={onSelect} />
-          ))}
-        </div>
+        <AnalystTabs analysts={analysts} onSelect={onSelect} />
       )}
     </div>
   )
