@@ -20,6 +20,7 @@ export default function App() {
   const [skills, setSkills] = useState([])
   const [analysts, setAnalysts] = useState([])
   const [analystsComputing, setAnalystsComputing] = useState(false)
+  const [market, setMarket] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState(null)
@@ -62,8 +63,14 @@ export default function App() {
     }
 
     if (results[3].status === 'fulfilled') {
-      setAnalysts(results[3].value.analysts || [])
-      setAnalystsComputing(!!results[3].value.computing)
+      const v = results[3].value
+      const picks = v.analysts || []
+      setAnalystsComputing(!!v.computing)
+      if (v.market) setMarket(v.market)
+      // 快照背景重算中（computing 且暫無資料）時保留現有畫面，避免資料瞬間「消失」
+      if (!(v.computing && picks.length === 0)) {
+        setAnalysts(picks)
+      }
     } else {
       errs.analysts = results[3].reason?.message
     }
@@ -111,6 +118,7 @@ export default function App() {
             computing={analystsComputing}
             error={errors.analysts}
             onSelect={setSelectedSymbol}
+            market={market}
           />
         </div>
 

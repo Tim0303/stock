@@ -291,6 +291,7 @@ BEGIN
   FROM v_strategy_box_latest l
   WHERE l.rating = 'buy'
     AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+    AND market_ok_now()   -- 大盤過濾：空頭時不開倉
     AND NOT EXISTS (
       SELECT 1 FROM analyses a
       WHERE a.symbol = l.symbol AND a.skill = 'strat-box' AND a.as_of = l.ts

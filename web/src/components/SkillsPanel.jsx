@@ -4,6 +4,7 @@ const FAMILY_LABELS = {
   'strat-5-10-20': { label: '5·10·20 順勢', color: '#00ff88' },
   'strat-box': { label: '箱型區間', color: '#ffa500' },
   'strat-vcp': { label: 'VCP 突破', color: '#00d4ff' },
+  'strat-spring': { label: '破支撐拉回', color: '#2dd4bf' },
   'baseline-momentum': { label: '動能對照', color: '#b38fd4' },
   'ml-logreg': { label: 'ML 預測', color: '#5a8fd4' },
 }
@@ -68,7 +69,7 @@ export default function SkillsPanel({ data, loading, error }) {
             <div className="mono text-xs" style={{ color: '#2a3a5a' }}>NO CHAMPION</div>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: '420px' }}>
             {champions.map(s => <ChampionRow key={`${s.family}-${s.version}`} {...s} />)}
           </div>
         )}

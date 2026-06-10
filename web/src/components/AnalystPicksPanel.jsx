@@ -5,6 +5,7 @@ const ANALYST_THEME = {
   'strat-vcp':          { accent: '#00ff88', glow: 'rgba(0,255,136' },
   'strat-5-10-20':      { accent: '#00d4ff', glow: 'rgba(0,212,255' },
   'strat-box':          { accent: '#b38fd4', glow: 'rgba(179,143,212' },
+  'strat-spring':       { accent: '#2dd4bf', glow: 'rgba(45,212,191' },
   'baseline-momentum':  { accent: '#ffb800', glow: 'rgba(255,184,0' },
   'ml-logreg':          { accent: '#ff6ec7', glow: 'rgba(255,110,199' },
 }
@@ -24,6 +25,22 @@ function ScoreCell({ score, accent }) {
     <span className="mono text-sm font-bold" style={{ color: Number.isNaN(n) ? '#4a6080' : accent }}>
       {Number.isNaN(n) ? '—' : n.toFixed(1)}
     </span>
+  )
+}
+
+// 交易計畫：壓力目標(+%) + 停損
+function TradePlanCell({ extra }) {
+  if (!extra || extra.target_price === null || extra.target_price === undefined) {
+    return <span className="mono text-xs" style={{ color: '#1e2d4a' }}>—</span>
+  }
+  return (
+    <div className="mono text-xs leading-tight whitespace-nowrap">
+      <div style={{ color: '#00ff88' }}>
+        🎯{fmtNum(extra.target_price, 1)}
+        <span style={{ color: '#8ba3c7' }}> +{fmtNum(extra.target_pct, 1)}%</span>
+      </div>
+      <div style={{ color: '#ff6b81' }}>🛑{fmtNum(extra.stop_price, 1)}</div>
+    </div>
   )
 }
 
@@ -54,20 +71,8 @@ function ExtraCell({ skill, extra }) {
     )
   }
 
-  if (skill === 'strat-5-10-20') {
-    const st = extra.signal_type
-    if (!st) return <span className="mono text-xs" style={{ color: '#1e2d4a' }}>—</span>
-    const colors = {
-      A: { bg: 'rgba(0,212,255,0.15)', border: 'rgba(0,212,255,0.5)', color: '#00d4ff' },
-      B: { bg: 'rgba(179,143,212,0.15)', border: 'rgba(179,143,212,0.5)', color: '#b38fd4' },
-      C: { bg: 'rgba(255,215,0,0.12)', border: 'rgba(255,215,0,0.4)', color: '#ffd700' },
-    }
-    const s = colors[st] || colors.A
-    return (
-      <span className="mono text-xs px-2 py-0.5 rounded-sm" style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}>
-        訊號{st}
-      </span>
-    )
+  if (skill === 'strat-5-10-20' || skill === 'strat-spring') {
+    return <TradePlanCell extra={extra} />
   }
 
   return <span className="mono text-xs" style={{ color: '#1e2d4a' }}>—</span>
@@ -76,8 +81,10 @@ function ExtraCell({ skill, extra }) {
 function AnalystCard({ analyst, onSelect }) {
   const theme = ANALYST_THEME[analyst.skill] || DEFAULT_THEME
   const accent = theme.accent
-  const hasExtra = analyst.skill === 'strat-vcp' || analyst.skill === 'strat-5-10-20'
-  const extraHeader = analyst.skill === 'strat-vcp' ? '狀態 / 距樞紐' : analyst.skill === 'strat-5-10-20' ? '訊號' : null
+  const hasExtra = analyst.skill === 'strat-vcp' || analyst.skill === 'strat-5-10-20' || analyst.skill === 'strat-spring'
+  const extraHeader = analyst.skill === 'strat-vcp' ? '狀態 / 距樞紐'
+    : (analyst.skill === 'strat-5-10-20' || analyst.skill === 'strat-spring') ? '目標 / 停損'
+    : null
 
   return (
     <div
@@ -117,9 +124,9 @@ function AnalystCard({ analyst, onSelect }) {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto flex-1">
+          <div className="overflow-auto flex-1" style={{ maxHeight: '240px' }}>
             <table className="w-full text-sm">
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, background: '#0a1020', zIndex: 1 }}>
                 <tr style={{ borderBottom: '1px solid #1a2540' }}>
                   <th className="mono text-left pb-1.5 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>
                   <th className="mono text-left pb-1.5 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>名稱</th>
@@ -162,7 +169,26 @@ function AnalystCard({ analyst, onSelect }) {
   )
 }
 
-export default function AnalystPicksPanel({ analysts = [], loading, computing, error, onSelect }) {
+function MarketBadge({ market }) {
+  if (!market) return null
+  const ok = market.market_ok
+  return (
+    <span
+      className="mono text-xs px-2 py-0.5 rounded-sm"
+      style={{
+        background: ok ? 'rgba(0,255,136,0.10)' : 'rgba(255,107,129,0.12)',
+        border: `1px solid ${ok ? 'rgba(0,255,136,0.4)' : 'rgba(255,107,129,0.45)'}`,
+        color: ok ? '#00ff88' : '#ff6b81',
+        whiteSpace: 'nowrap',
+      }}
+      title="大盤寬度＝% 個股站上 20MA；<50% 視為空頭，策略類分析師暫不開倉"
+    >
+      {ok ? '◉' : '◯'} 大盤寬度 {market.breadth_pct}% {ok ? '健康' : '偏弱·暫不開倉'}
+    </span>
+  )
+}
+
+export default function AnalystPicksPanel({ analysts = [], loading, computing, error, onSelect, market }) {
   const total = analysts.reduce((s, a) => s + (a.count || 0), 0)
   const noSnapshot = analysts.length === 0
 
@@ -170,10 +196,11 @@ export default function AnalystPicksPanel({ analysts = [], loading, computing, e
     <div>
       <div className="section-header text-sm mb-3">
         <span style={{ color: '#00d4ff' }}>◆</span>
-        5 位分析師推薦
+        分析師推薦
         <span className="mono text-xs" style={{ color: '#4a6080' }}>
           {loading && noSnapshot ? 'LOADING...' : noSnapshot && computing ? 'COMPUTING...' : `共 ${total} 檔 · ${analysts.length} 位分析師`}
         </span>
+        <span className="ml-auto"><MarketBadge market={market} /></span>
       </div>
 
       {error && (

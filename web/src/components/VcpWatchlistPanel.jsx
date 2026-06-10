@@ -1,10 +1,13 @@
 import React from 'react'
 
-// 狀態 → 顏色：剛突破=綠、待突破(量縮)/待突破=琥珀
+// 狀態 → 顏色：剛突破=綠、待突破=琥珀、醞釀中(早期預測)=青
 function StatusBadge({ status }) {
   const isBreakout = status === '剛突破'
+  const isForming = typeof status === 'string' && status.startsWith('醞釀中')
   const style = isBreakout
     ? { bg: 'rgba(0,255,136,0.12)', border: 'rgba(0,255,136,0.45)', color: '#00ff88' }
+    : isForming
+    ? { bg: 'rgba(0,212,255,0.12)', border: 'rgba(0,212,255,0.40)', color: '#00d4ff' }
     : { bg: 'rgba(255,184,0,0.12)', border: 'rgba(255,184,0,0.40)', color: '#ffb800' }
   return (
     <span
@@ -48,7 +51,7 @@ export default function VcpWatchlistPanel({ data = [], scanDate, loading, error 
       <div className="p-4">
         <div className="section-header text-sm mb-4">
           <span style={{ color: '#00ff88' }}>◆</span>
-          VCP 突破監控
+          VCP 形成監控
           <span className="mono text-xs" style={{ color: '#4a6080' }}>
             {loading ? 'LOADING...' : scanDate ? `${scanDate} · ${data.length} 檔` : `${data.length} 檔`}
           </span>
@@ -68,7 +71,7 @@ export default function VcpWatchlistPanel({ data = [], scanDate, loading, error 
           <div className="flex flex-col items-center justify-center py-10 gap-2">
             <div className="mono text-2xl" style={{ color: '#1a2540' }}>◯</div>
             <div className="text-xs" style={{ color: '#2a3a5a', fontFamily: 'Noto Sans TC' }}>
-              今日無 VCP 候選（市場條件不符）
+              今日無 VCP 形成中／突破候選（市場條件不符）
             </div>
           </div>
         ) : (

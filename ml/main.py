@@ -4,9 +4,8 @@ main.py — ML 分析師進入點。
 子命令：
   train    : 訓練 ml-logreg（LogisticRegression），存模型 models/logreg.pkl，
              並印訓練樣本數與 train accuracy。
-  predict  : 對最新交易日的近期標的，寫入兩種預測到 analyses：
-               - baseline-momentum（規則式，近 20 日報酬符號）
-               - ml-logreg（載入模型，輸出上漲機率）
+  predict  : 對最新交易日的近期標的，寫入 ml-logreg 預測到 analyses（載入模型，輸出上漲機率）。
+             （baseline-momentum 對照已移除：純對照、無實用價值。）
 
 契約：
   - 只 INSERT 符合 analyses schema 的列，不改表、不刪資料。
@@ -131,30 +130,10 @@ def cmd_predict():
         print(f"[predict] 近期標的數: {n_syms} "
               f"(最新交易日 {latest['ts'].max().date()})")
 
-        # ---- 1) baseline-momentum：近 20 日報酬符號 -------------------- #
-        base_rows = []
-        for _, r in latest.iterrows():
-            mom = float(r["ret_20"])
-            up = mom > 0
-            base_rows.append({
-                "symbol": r["symbol"],
-                "skill": "baseline-momentum",
-                "as_of": r["ts"].date(),
-                "horizon_days": HORIZON_DAYS,
-                "due_date": _due_date(r["ts"]),
-                "direction": "long" if up else "short",
-                "predicted": "up" if up else "down",
-                "score": round(abs(mom) * 100, 4),   # 動能強度(%)
-                "signal_type": "momentum",
-                "entry_price": round(float(r["close"]), 4),
-                "meta": '{"model":"baseline-momentum","feature":"ret_20"}',
-            })
-        _insert_rows(conn, base_rows)
-        b_up = sum(1 for x in base_rows if x["predicted"] == "up")
-        print(f"[predict] baseline-momentum 寫入 {len(base_rows)} 筆 "
-              f"(up={b_up}, down={len(base_rows) - b_up})")
+        # ---- baseline-momentum 已移除（純對照、無實用價值，使用者要求停用）-------- #
+        # 原規則：近 20 日報酬符號（ret_20>0 → 續漲）。歷史 analyses 保留、不再新增。
 
-        # ---- 2) ml-logreg：載入模型輸出上漲機率 ----------------------- #
+        # ---- ml-logreg：載入模型輸出上漲機率 ----------------------- #
         # docker compose run --rm 每次為全新容器、models/ 未掛載 volume，
         # 故若找不到已存模型則就地重新訓練（自我完備，predict 不依賴前次 train）。
         if os.path.exists(MODEL_PATH):

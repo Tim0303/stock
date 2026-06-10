@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import ReactECharts from 'echarts-for-react'
 
-async function fetchIndicators(symbol, limit = 120) {
+async function fetchIndicators(symbol, limit = 250) {
   const res = await fetch(`/api/indicators/${encodeURIComponent(symbol)}?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
 
-async function fetchStrategy(symbol, limit = 120) {
+async function fetchStrategy(symbol, limit = 250) {
   const res = await fetch(`/api/strategy/${encodeURIComponent(symbol)}?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
@@ -26,7 +26,25 @@ const RATING_COLORS = {
   avoid: '#ff3366',
 }
 
-function buildChartOption(indicators, strategy, showStrategy) {
+// 5-10-20 進場訊號標記配色（與候選榜徽章一致）：A 突破=青 / B 回測=紫 / C 站回=金
+const SIGNAL_COLORS = { A: '#00d4ff', B: '#b38fd4', C: '#ffd700' }
+
+// 股價一律顯示到小數點後 2 位
+function fmtPrice(v) {
+  if (v === null || v === undefined) return '—'
+  const n = Number(v)
+  if (Number.isNaN(n)) return '—'
+  return n.toFixed(2)
+}
+
+// 均線設定（可逐條開關）：MA5=黃 / MA10=紫 / MA20=青（原 MA5 色）
+const MA_CONFIG = [
+  { key: 'ma5', name: 'MA5', color: '#ffb800' },
+  { key: 'ma10', name: 'MA10', color: '#b38fd4' },
+  { key: 'ma20', name: 'MA20', color: '#00d4ff' },
+]
+
+function buildChartOption(indicators, strategy, showStrategy, maVisible) {
   if (!indicators || indicators.length === 0) return null
 
   // Sort chronologically
@@ -37,29 +55,37 @@ function buildChartOption(indicators, strategy, showStrategy) {
   }
 
   const dates = sorted.map(d => d.ts.slice(0, 10))
-  const candleData = sorted.map(d => [d.open, d.close, d.low, d.high])
+  const candleData = sorted.map(d => [
+    d.open != null ? +(+d.open).toFixed(2) : d.open,
+    d.close != null ? +(+d.close).toFixed(2) : d.close,
+    d.low != null ? +(+d.low).toFixed(2) : d.low,
+    d.high != null ? +(+d.high).toFixed(2) : d.high,
+  ])
   const volumes = sorted.map(d => d.volume)
   const ma5 = sorted.map(d => d.ma5 != null ? +d.ma5.toFixed(2) : null)
   const ma10 = sorted.map(d => d.ma10 != null ? +d.ma10.toFixed(2) : null)
   const ma20 = sorted.map(d => d.ma20 != null ? +d.ma20.toFixed(2) : null)
 
-  // Strategy signal markers
+  // Strategy signal markers（A/C 進場訊號：放 K 棒下方、向上箭頭＝買點）
   const markPoints = []
   if (showStrategy && strategy) {
     sorted.forEach((d, i) => {
       const s = stratMap[d.ts]
-      if (s && s.signal_type) {
+      // 只標示真正的買訊（rating=buy）；avoid/skip/watch 的訊號不畫，避免把「追高被濾掉的 A」誤看成買點
+      if (s && s.signal_type && s.rating === 'buy') {
+        const col = SIGNAL_COLORS[s.signal_type] || '#00d4ff'
         markPoints.push({
-          coord: [i, d.high * 1.015],
+          coord: [i, d.low * 0.985],
           value: s.signal_type,
-          itemStyle: { color: RATING_COLORS[s.rating] || '#00d4ff' },
+          itemStyle: { color: col, borderColor: '#0a0f1e', borderWidth: 1 },
+          label: { color: col },
         })
       }
     })
   }
 
   // Volume colors
-  const volColors = sorted.map(d => d.close >= (d.open || d.close) ? 'rgba(0,255,136,0.6)' : 'rgba(255,51,102,0.6)')
+  const volColors = sorted.map(d => d.close >= (d.open || d.close) ? 'rgba(255,51,102,0.6)' : 'rgba(0,255,136,0.6)')
 
   return {
     backgroundColor: 'transparent',
@@ -94,7 +120,7 @@ function buildChartOption(indicators, strategy, showStrategy) {
             const [o, c, l, h] = p.value
             const chg = c - o
             const pct = ((chg / o) * 100).toFixed(2)
-            const color = c >= o ? '#00ff88' : '#ff3366'
+            const color = c >= o ? '#ff3366' : '#00ff88'
             html += `<div style="color:${color}">O:${o} H:${h} L:${l} C:${c}</div>`
             html += `<div style="color:${color}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${pct}%)</div>`
           } else if (p.seriesName && p.seriesName.startsWith('MA')) {
@@ -147,12 +173,13 @@ function buildChartOption(indicators, strategy, showStrategy) {
         type: 'value',
         gridIndex: 0,
         position: 'left',
+        scale: true,
         axisLine: { show: false },
         axisLabel: {
           color: '#4a6080',
           fontFamily: 'Share Tech Mono',
           fontSize: 10,
-          formatter: v => v.toFixed(1),
+          formatter: v => v.toFixed(2),
         },
         splitLine: { lineStyle: { color: '#1a2540', type: 'dashed' } },
         axisTick: { show: false },
@@ -170,7 +197,7 @@ function buildChartOption(indicators, strategy, showStrategy) {
       {
         type: 'inside',
         xAxisIndex: [0, 1],
-        start: Math.max(0, 100 - (60 / sorted.length) * 100),
+        start: Math.max(0, 100 - (40 / sorted.length) * 100),
         end: 100,
       },
       {
@@ -183,7 +210,7 @@ function buildChartOption(indicators, strategy, showStrategy) {
         fillerColor: 'rgba(0,212,255,0.06)',
         handleStyle: { color: '#00d4ff44', borderColor: '#00d4ff88' },
         textStyle: { color: '#4a6080', fontFamily: 'Share Tech Mono', fontSize: 9 },
-        start: Math.max(0, 100 - (60 / sorted.length) * 100),
+        start: Math.max(0, 100 - (40 / sorted.length) * 100),
         end: 100,
       },
     ],
@@ -194,59 +221,44 @@ function buildChartOption(indicators, strategy, showStrategy) {
         xAxisIndex: 0,
         yAxisIndex: 0,
         data: candleData,
+        barMaxWidth: 18,
+        barMinWidth: 4,
+        z: 6,
         itemStyle: {
-          color: '#00ff88',
-          color0: '#ff3366',
-          borderColor: '#00cc66',
-          borderColor0: '#cc2244',
-          borderWidth: 1,
+          // 台股慣例：紅漲綠跌（color=收>=開 上漲、color0=下跌）
+          color: '#ff3366',
+          color0: '#00ff88',
+          borderColor: '#ff3366',
+          borderColor0: '#00ff88',
+          borderWidth: 1.5,
         },
         markPoint: markPoints.length > 0 ? {
           symbol: 'triangle',
-          symbolSize: 10,
+          symbolSize: 20,
           data: markPoints,
           label: {
             show: true,
+            position: 'bottom',
+            distance: 3,
             formatter: p => p.value,
-            color: '#fff',
-            fontSize: 9,
+            fontSize: 13,
+            fontWeight: 'bold',
             fontFamily: 'Share Tech Mono',
           },
         } : undefined,
       },
-      {
-        name: 'MA5',
+      // 均線：依 MA_CONFIG 順序，只畫「開關開啟」的那幾條
+      ...MA_CONFIG.filter(m => !maVisible || maVisible[m.key]).map(m => ({
+        name: m.name,
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: ma5,
+        data: { ma5, ma10, ma20 }[m.key],
         smooth: false,
         symbol: 'none',
-        lineStyle: { color: '#00d4ff', width: 1.5 },
-        z: 5,
-      },
-      {
-        name: 'MA10',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: ma10,
-        smooth: false,
-        symbol: 'none',
-        lineStyle: { color: '#b38fd4', width: 1.5 },
-        z: 5,
-      },
-      {
-        name: 'MA20',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: ma20,
-        smooth: false,
-        symbol: 'none',
-        lineStyle: { color: '#ffb800', width: 1.5 },
-        z: 5,
-      },
+        lineStyle: { color: m.color, width: 1.2, opacity: 0.85 },
+        z: 4,
+      })),
       {
         name: '量',
         type: 'bar',
@@ -259,15 +271,6 @@ function buildChartOption(indicators, strategy, showStrategy) {
         barMaxWidth: 8,
       },
     ],
-    legend: {
-      top: 4,
-      right: 16,
-      textStyle: { color: '#4a6080', fontFamily: 'Share Tech Mono', fontSize: 10 },
-      inactiveColor: '#2a3a5a',
-      itemWidth: 16,
-      itemHeight: 2,
-      data: ['MA5', 'MA10', 'MA20'],
-    },
   }
 }
 
@@ -277,6 +280,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showStrategy, setShowStrategy] = useState(true)
+  // 均線開關（預設全開）
+  const [maVisible, setMaVisible] = useState({ ma5: true, ma10: true, ma20: true })
 
   // 個股查詢：本面板自管「目前顯示的代號」
   const [activeSymbol, setActiveSymbol] = useState(symbol || defaultSymbol)
@@ -309,8 +314,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
     setError(null)
     try {
       const [indRes, stratRes] = await Promise.allSettled([
-        fetchIndicators(sym, 120),
-        fetchStrategy(sym, 120),
+        fetchIndicators(sym, 250),
+        fetchStrategy(sym, 250),
       ])
       if (indRes.status === 'fulfilled') setIndicators(indRes.value.data || [])
       else setError(indRes.reason?.message)
@@ -327,8 +332,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
   }, [activeSymbol, loadData])
 
   const option = useMemo(
-    () => buildChartOption(indicators, strategy, showStrategy),
-    [indicators, strategy, showStrategy]
+    () => buildChartOption(indicators, strategy, showStrategy, maVisible),
+    [indicators, strategy, showStrategy, maVisible]
   )
 
   // Latest price info
@@ -403,7 +408,7 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
           {latest && (
             <div className="flex items-center gap-4 mr-4">
               <div className="text-right">
-                <div className="mono text-xl font-bold" style={{ color: '#e8f1ff' }}>{latest.close}</div>
+                <div className="mono text-xl font-bold" style={{ color: '#e8f1ff' }}>{fmtPrice(latest.close)}</div>
                 <div className="mono text-xs" style={{ color: '#4a6080' }}>{latest.ts?.slice(0, 10)}</div>
               </div>
               {latestStrat && (
@@ -436,26 +441,37 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
           </div>
         </div>
 
-        {/* MA Legend quick labels */}
+        {/* MA 開關（點擊切換顯示／隱藏） */}
         <div className="flex gap-3 mb-3">
-          {[
-            { name: 'MA5', color: '#00d4ff' },
-            { name: 'MA10', color: '#b38fd4' },
-            { name: 'MA20', color: '#ffb800' },
-          ].map(m => (
-            <div key={m.name} className="flex items-center gap-1">
-              <div style={{ width: 16, height: 2, background: m.color, borderRadius: 1 }} />
-              <span className="mono text-xs" style={{ color: m.color }}>{m.name}</span>
-            </div>
-          ))}
+          {MA_CONFIG.map(m => {
+            const on = maVisible[m.key]
+            return (
+              <button
+                key={m.key}
+                onClick={() => setMaVisible(v => ({ ...v, [m.key]: !v[m.key] }))}
+                className="flex items-center gap-1 mono text-xs"
+                style={{
+                  cursor: 'pointer',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  opacity: on ? 1 : 0.35,
+                }}
+                title={on ? '點擊隱藏' : '點擊顯示'}
+              >
+                <div style={{ width: 16, height: 2, background: on ? m.color : '#4a6080', borderRadius: 1 }} />
+                <span style={{ color: on ? m.color : '#4a6080', textDecoration: on ? 'none' : 'line-through' }}>{m.name}</span>
+              </button>
+            )
+          })}
           {latest && (
             <>
               <div className="ml-2 flex items-center gap-1">
-                <div style={{ width: 8, height: 8, background: '#00ff88', borderRadius: 1 }} />
+                <div style={{ width: 8, height: 8, background: '#ff3366', borderRadius: 1 }} />
                 <span className="mono text-xs" style={{ color: '#4a6080' }}>漲</span>
               </div>
               <div className="flex items-center gap-1">
-                <div style={{ width: 8, height: 8, background: '#ff3366', borderRadius: 1 }} />
+                <div style={{ width: 8, height: 8, background: '#00ff88', borderRadius: 1 }} />
                 <span className="mono text-xs" style={{ color: '#4a6080' }}>跌</span>
               </div>
             </>

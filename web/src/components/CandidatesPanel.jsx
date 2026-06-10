@@ -77,9 +77,9 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
             <div className="mono text-xs" style={{ color: '#2a3a5a' }}>NO CANDIDATES TODAY</div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto" style={{ maxHeight: '520px' }}>
             <table className="w-full text-sm">
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, background: '#0a1020', zIndex: 1 }}>
                 <tr style={{ borderBottom: '1px solid #1a2540' }}>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>RANK</th>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>

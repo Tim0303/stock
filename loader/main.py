@@ -252,8 +252,9 @@ def fetch_dividend_events(sid):
 
 
 def compute_adj_factor(cur, symbol):
-    """以原始相鄰收盤算每次除權息補償係數，後復權累乘 → 寫 daily_prices.adj_factor。
-    除息 ef = P_prev/(P_prev-cash)；除權 ef = 1+配股率；同日連乘。"""
+    """以原始相鄰收盤算每次除權息補償係數，累乘後正規化（前復權）→ 寫 daily_prices.adj_factor。
+    除息 ef = P_prev/(P_prev-cash)；除權 ef = 1+配股率；同日連乘。
+    最後一筆係數 = 1.0（現價 = 實際成交價），歷史 < 1.0；報酬仍含息。"""
     cur.execute("SELECT ts, close FROM daily_prices WHERE symbol=%s AND close>0 ORDER BY ts", (symbol,))
     rows = cur.fetchall()
     if not rows:
@@ -275,12 +276,15 @@ def compute_adj_factor(cur, symbol):
             continue
         ef_by_date[exd] = ef_by_date.get(exd, 1.0) * (pprev / pref)
     sorted_ex = sorted(ef_by_date)
-    updates, cum, ei = [], 1.0, 0
+    raw, cum, ei = [], 1.0, 0
     for d in dates:
         while ei < len(sorted_ex) and sorted_ex[ei] <= d:
             cum *= ef_by_date[sorted_ex[ei]]
             ei += 1
-        updates.append((round(cum, 8), symbol, d))
+        raw.append((d, cum))
+    # 前復權正規化：最近一筆 = 1.0，歷史往回縮放 → 現價 = 實際成交價、報酬仍含息。
+    final = raw[-1][1] if raw else 1.0
+    updates = [(round(c / final, 8), symbol, d) for (d, c) in raw]
     execute_values(cur,
         "UPDATE daily_prices AS dp SET adj_factor = v.f "
         "FROM (VALUES %s) AS v(f, sym, ts) WHERE dp.symbol = v.sym AND dp.ts = v.ts::date",

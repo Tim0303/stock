@@ -86,9 +86,8 @@ function AccuracyCard({ skill, n_evaluated, win_rate, avg_return, profit_factor 
 }
 
 const DEFAULT_SKILLS = [
-  { skill: 'baseline-momentum', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
-  { skill: 'ml-logreg', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'strat-5-10-20', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
+  { skill: 'ml-logreg', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
 ]
 
 export default function AccuracyPanel({ data, loading, error }) {
@@ -103,7 +102,7 @@ export default function AccuracyPanel({ data, loading, error }) {
       <div className="p-4">
         <div className="section-header text-sm mb-4">
           <span style={{ color: '#00d4ff' }}>◆</span>
-          三方準確率
+          策略準確率
           <span className="mono text-xs" style={{ color: '#4a6080' }}>ACCURACY</span>
         </div>
 
@@ -118,7 +117,7 @@ export default function AccuracyPanel({ data, loading, error }) {
             <div className="mono text-sm" style={{ color: '#1f3060' }}>[ LOADING... ]</div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: '420px' }}>
             {displayData.map(item => (
               <AccuracyCard key={item.skill} {...item} />
             ))}

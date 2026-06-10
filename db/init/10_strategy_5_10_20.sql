@@ -26,6 +26,8 @@ p AS (
     COALESCE((params->>'enable_signal_A')::boolean, true) AS en_a,
     COALESCE((params->>'enable_signal_B')::boolean, true) AS en_b,
     COALESCE((params->>'enable_signal_C')::boolean, true) AS en_c,
+    -- 防追高：A 突破只在「突破點(前5日高)上方 brk_max_ext 內」才買；預設 99=不限制（champion 行為不變）
+    COALESCE((params->>'breakout_max_ext')::numeric, 99)  AS brk_max_ext,
     COALESCE((params->>'horizon_days')::int, 5)           AS horizon
   FROM champ
 ),
@@ -38,9 +40,11 @@ calc AS (
     -- 多方結構：Close>5MA>10MA>20MA 且 20MA 走平或上彎
     (i.close > i.ma5 AND i.ma5 > i.ma10 AND i.ma10 > i.ma20
        AND i.ma20 >= i.ma20_prev)                                   AS bull_align,
-    -- 進場 A 突破：多方 + 突破前5日高 + 放量
+    -- 進場 A 突破：多方 + 突破前5日高 + 放量 + 防追高（收盤須在突破點上方 brk_max_ext 內）
     (p.en_a AND i.close > i.ma5 AND i.ma5 > i.ma10 AND i.ma10 > i.ma20
-       AND i.close > i.prev_high_5 AND i.volume > i.vol_ma5 * p.volmin) AS sig_a,
+       AND i.close > i.prev_high_5
+       AND i.close <= i.prev_high_5 * (1 + p.brk_max_ext)
+       AND i.volume > i.vol_ma5 * p.volmin) AS sig_a,
     -- 進場 B 回測10MA不破：多方排列 + 探10MA未破 + 收紅 + 未爆量
     (p.en_b AND i.ma5 > i.ma10 AND i.ma10 > i.ma20
        AND i.low <= i.ma10 AND i.close > i.ma10
@@ -51,7 +55,10 @@ calc AS (
     -- 過濾（即使分數高也不進場）：跌破20MA / 乖離過大 / 20MA下彎
     (i.close < i.ma20 OR i.bias_ma20 > p.bias20max
        OR i.bias_ma10 > p.bias10max OR i.ma20 < i.ma20_prev)        AS filtered,
-    i.n_window
+    i.n_window,
+    -- 上方壓力：前 60 日最高（不含當日）→ 出場目標用
+    max(i.high) OVER (PARTITION BY i.symbol ORDER BY i.ts
+                      ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING)     AS prev_high_60
   FROM v_price_indicators i CROSS JOIN p
 )
 SELECT
@@ -80,7 +87,13 @@ SELECT
          + CASE WHEN volume > vol_ma5 * volmin THEN w_vol ELSE 0 END
          + CASE WHEN ma20 > ma20_prev THEN w_ma20up ELSE 0 END ) >= watch_thr THEN 'watch'
     ELSE 'skip'
-  END AS rating
+  END AS rating,
+  -- 交易計畫：壓力目標（上方60日前高下緣×0.99，封頂+25%；無壓力→回退+15%）+ 停損−8%
+  CASE WHEN prev_high_60 > close*1.01 THEN round(LEAST(prev_high_60*0.99, close*1.25), 2)
+       ELSE round(close*1.15, 2) END                                   AS target_price,
+  round(close*0.92, 2)                                                 AS stop_price,
+  CASE WHEN prev_high_60 > close*1.01 THEN round((LEAST(prev_high_60*0.99, close*1.25)/close - 1)*100, 1)
+       ELSE 15.0 END                                                   AS target_pct
 FROM calc
 WHERE n_window >= 20;   -- 需至少 20 日資料，20MA 才完整
 
@@ -112,6 +125,7 @@ BEGIN
     -- 只收「近期仍在交易」的真實當前訊號，排除下市/停止交易的殭屍股
     -- （它們的最新資料停在數年前，due_date 早過，不該當即時預測）
     AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+    AND market_ok_now()   -- 大盤過濾：空頭(寬度<50%)時不開倉
     AND NOT EXISTS (
       SELECT 1 FROM analyses a
       WHERE a.symbol = l.symbol AND a.skill = 'strat-5-10-20' AND a.as_of = l.ts

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS vcp_watchlist (
   contraction_count  int,             -- 收縮次數
   last_drawdown_pct  numeric,         -- 末次收縮回檔幅度（%）
   score              numeric,         -- 0-100 VCP 評分
-  status             text,            -- '剛突破' / '待突破(量縮)' / '待突破'
+  status             text,            -- 剛突破 / 待突破(量縮) / 待突破 / 醞釀中(量縮) / 醞釀中
   vol_dry            boolean,         -- 量縮乾涸
   created_at         timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (scan_date, symbol)

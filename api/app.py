@@ -189,6 +189,7 @@ def accuracy():
             """
             SELECT skill, n_evaluated, win_rate, avg_return, profit_factor
             FROM v_skill_performance
+            WHERE skill <> 'baseline-momentum'   -- 動能對照已移除（純對照、無實用價值）
             ORDER BY win_rate DESC NULLS LAST
             """
         )
@@ -287,6 +288,7 @@ def skills():
                 payoff_ratio, sharpe_like, max_drawdown, oos_win_rate,
                 last_evaluated_at, created_by, notes, created_at
             FROM skills
+            WHERE family <> 'baseline-momentum'   -- 動能對照已移除（純對照、無實用價值）
             ORDER BY family, version DESC
             """
         )
@@ -391,7 +393,11 @@ def vcp_watchlist():
                 scan_date, symbol, name, close, pivot, distance_pct,
                 contraction_count, last_drawdown_pct, score, status, vol_dry
             FROM vcp_watchlist
-            WHERE scan_date = (SELECT max(scan_date) FROM vcp_watchlist)
+            -- 近期防呆：只取最近 7 日內的快照，避免掃描無候選時退回顯示遠古舊清單
+            WHERE scan_date = (
+                SELECT max(scan_date) FROM vcp_watchlist
+                WHERE scan_date >= (SELECT max(ts)::date FROM daily_prices) - 7
+            )
             ORDER BY score DESC NULLS LAST, distance_pct ASC
             """
         )
@@ -483,7 +489,10 @@ def _compute_analyst_picks() -> dict:
         """
         SELECT symbol, name, score, status, distance_pct
         FROM vcp_watchlist
-        WHERE scan_date = (SELECT max(scan_date) FROM vcp_watchlist)
+        WHERE scan_date = (
+            SELECT max(scan_date) FROM vcp_watchlist
+            WHERE scan_date >= (SELECT max(ts)::date FROM daily_prices) - 7
+        )
         ORDER BY score DESC NULLS LAST, distance_pct ASC
         """,
     )
@@ -491,7 +500,10 @@ def _compute_analyst_picks() -> dict:
     try:
         if table_exists(conn, "vcp_watchlist"):
             with conn.cursor() as cur:
-                cur.execute("SELECT max(scan_date) FROM vcp_watchlist")
+                cur.execute(
+                    "SELECT max(scan_date) FROM vcp_watchlist "
+                    "WHERE scan_date >= (SELECT max(ts)::date FROM daily_prices) - 7"
+                )
                 r = cur.fetchone()
                 vcp_as_of = r[0].isoformat() if r and r[0] else None
     except Exception:
@@ -517,11 +529,13 @@ def _compute_analyst_picks() -> dict:
         conn,
         "v_strategy_latest",
         """
-        SELECT l.symbol, sy.name, l.score, l.signal_type, l.ts AS as_of
+        SELECT l.symbol, sy.name, l.score, l.signal_type, l.close AS entry_price,
+               l.target_price, l.stop_price, l.target_pct, l.ts AS as_of
         FROM v_strategy_latest l
         JOIN symbols sy USING (symbol)
         WHERE l.rating = 'buy'
           AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+          AND market_ok_now()
         ORDER BY l.score DESC NULLS LAST
         """,
     )
@@ -536,7 +550,13 @@ def _compute_analyst_picks() -> dict:
                 "symbol": r["symbol"],
                 "name": r.get("name"),
                 "score": r.get("score"),
-                "extra": {"signal_type": r.get("signal_type")},
+                "extra": {
+                    "signal_type": r.get("signal_type"),
+                    "entry_price": r.get("entry_price"),
+                    "target_price": r.get("target_price"),
+                    "stop_price": r.get("stop_price"),
+                    "target_pct": r.get("target_pct"),
+                },
             }
             for r in s510_rows
         ],
@@ -552,6 +572,7 @@ def _compute_analyst_picks() -> dict:
         JOIN symbols sy USING (symbol)
         WHERE l.buy_signal
           AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+          AND market_ok_now()
         ORDER BY l.score DESC NULLS LAST
         """,
     )
@@ -572,9 +593,47 @@ def _compute_analyst_picks() -> dict:
         ],
     })
 
-    # ── 4 & 5. baseline-momentum / ml-logreg (analyses) ───────────────────────
+    # ── 4. 破支撐拉回 strat-spring（v_support_reclaim_latest）──────────────────
+    spring_rows = _safe_picks(
+        conn,
+        "v_support_reclaim_latest",
+        """
+        SELECT r.symbol, sy.name, r.score, r.above_sup_pct, r.close AS entry_price,
+               r.target_price, r.stop_price, r.target_pct, r.ts AS as_of
+        FROM v_support_reclaim_latest r
+        JOIN symbols sy USING (symbol)
+        WHERE r.signal_type = 'spring'
+          AND r.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+          AND market_ok_now()
+        ORDER BY r.score DESC NULLS LAST
+        """,
+    )
+    spring_as_of = spring_rows[0]["as_of"].isoformat() if spring_rows and spring_rows[0].get("as_of") else None
+    analysts.append({
+        "skill": "strat-spring",
+        "label": "破支撐拉回",
+        "as_of": spring_as_of,
+        "count": len(spring_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {
+                    "above_sup_pct": r.get("above_sup_pct"),
+                    "entry_price": r.get("entry_price"),
+                    "target_price": r.get("target_price"),
+                    "stop_price": r.get("stop_price"),
+                    "target_pct": r.get("target_pct"),
+                },
+            }
+            for r in spring_rows
+        ],
+    })
+
+    # ── 5. ml-logreg (analyses) ───────────────────────────────────────────────
+    # 註：baseline-momentum（動能對照）已於使用者要求下移除（純對照、無實用價值）。
     for skill_id, label in [
-        ("baseline-momentum", "動能對照"),
         ("ml-logreg", "ML 預測"),
     ]:
         rows = _safe_picks(
@@ -613,12 +672,23 @@ def _compute_analyst_picks() -> dict:
             ],
         })
 
+    # 大盤體質（寬度）；策略類分析師在 market_ok=false 時不開倉（空頭過濾）
+    market = None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ts, breadth_pct, market_ok FROM v_market_regime ORDER BY ts DESC LIMIT 1")
+            r = cur.fetchone()
+            if r:
+                market = {"ts": r[0].isoformat(), "breadth_pct": float(r[1]), "market_ok": bool(r[2])}
+    except Exception:
+        conn.rollback()
+
     try:
         conn.rollback()  # 唯讀，無需 commit；結束交易並釋放連線
     except Exception:
         pass
     conn.close()
-    return {"analysts": analysts}
+    return {"analysts": analysts, "market": market}
 
 
 def _refresh_analyst_cache():

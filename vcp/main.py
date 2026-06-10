@@ -399,10 +399,39 @@ _WATCHLIST_UPSERT_SQL = """
 """
 
 
+FORMING_DIST_MAX = 0.25      # 醞釀中：距樞紐 5%~25%（收縮成形中、尚未貼近 → 預測快形成 VCP）
+FORMING_LAST_DD_MAX = 0.12   # 醞釀中末次回檔上限（比完整候選 0.10 略寬）
+
+
+def _vcp_stage(res):
+    """分類 VCP 階段，回傳 'breakout'/'near'/'forming' 或 None（不入清單）。
+    - breakout/near：完整 VCP 候選（candidate_pass）且貼近或剛突破樞紐（距樞紐 -5%~+5%）。
+    - forming（醞釀中）：趨勢成立 + 已有 ≥2 次「逐次變小」的回檔（VCP 雛形，比完整候選的
+      0.65× 嚴格遞減寬鬆，只需非遞增）+ 末次回檔 ≤ 上限，但距樞紐仍 5%~25%（尚未貼近）
+      → 早期預測「快形成 VCP」。不要求 time_compression。"""
+    dp = res.distance_to_pivot
+    if res.candidate_pass and not np.isnan(dp) and dp >= -0.05:
+        return "breakout" if res.breakout else "near"
+    dds = res.drawdowns
+    loosely_contracting = len(dds) >= 2 and all(
+        dds[k] <= dds[k - 1] + 1e-9 for k in range(1, len(dds)))
+    if (res.stage2_pass and res.contraction_count >= 2
+            and loosely_contracting
+            and not np.isnan(res.last_drawdown)
+            and res.last_drawdown <= FORMING_LAST_DD_MAX
+            and not np.isnan(dp)
+            and DEFAULT_PARAMS["near_pivot_pct"] < dp <= FORMING_DIST_MAX):
+        return "forming"
+    return None
+
+
 def _watchlist_status(row):
-    """中文狀態：剛突破 / 待突破(量縮) / 待突破。"""
-    if row["breakout"]:
+    """中文狀態：剛突破 / 待突破(量縮) / 待突破 / 醞釀中(量縮) / 醞釀中。"""
+    stage = row.get("stage")
+    if stage == "breakout":
         return "剛突破"
+    if stage == "forming":
+        return "醞釀中(量縮)" if row["vol_dry"] else "醞釀中"
     if row["vol_dry"]:
         return "待突破(量縮)"
     return "待突破"
@@ -461,19 +490,24 @@ def cmd_watchlist(target_date=None):
                 continue
             ts, o, h, l, c, v = to_arrays(df)
             res = detect_vcp_at(ts, o, h, l, c, v, d)
-            # 規格13.1 候選 + 排除「已突破過遠」（規格14：離樞紐 >5% 追高風險）
-            # dist>=-0.05 → close 不超過 pivot 的 105%；near_pivot 已保證 close>=pivot*0.95
-            if res.candidate_pass and res.distance_to_pivot >= -0.05:
-                rows.append({
-                    "symbol": sym, "name": names.get(sym, ""),
-                    "close": round(res.close, 2), "pivot": round(res.pivot_price, 2),
-                    "dist": round(res.distance_to_pivot * 100, 2),
-                    "nc": res.contraction_count,
-                    "last_dd": round(res.last_drawdown * 100, 2),
-                    "vol_dry": res.volume_dry_up, "breakout": res.breakout,
-                    "score": round(res.score, 1),
-                })
-        rows.sort(key=lambda r: (-r["score"], r["dist"]))
+            # 三階段：剛突破/待突破（完整候選貼近樞紐）+ 醞釀中（收縮成形、尚未到樞紐 → 預測快形成）
+            stage = _vcp_stage(res)
+            if stage is None:
+                continue
+            rows.append({
+                "symbol": sym, "name": names.get(sym, ""),
+                "close": round(res.close, 2), "pivot": round(res.pivot_price, 2),
+                "dist": round(res.distance_to_pivot * 100, 2),
+                "nc": res.contraction_count,
+                "last_dd": round(res.last_drawdown * 100, 2),
+                "vol_dry": res.volume_dry_up, "breakout": res.breakout,
+                "score": round(res.score, 1),
+                "stage": stage,
+            })
+        # 末段（breakout/near）優先於早期（forming），同組內依分數高、距樞紐近排序
+        _stage_rank = {"breakout": 0, "near": 1, "forming": 2}
+        rows.sort(key=lambda r: (_stage_rank.get(r["stage"], 9), -r["score"], r["dist"]))
+        rows = rows[:50]
 
         # 寫入 vcp_watchlist 表（展示快照）：先刪該 scan_date 舊列，再 upsert。
         _persist_watchlist(conn, max_ts.date(), rows)
