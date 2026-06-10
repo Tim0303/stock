@@ -125,7 +125,7 @@ BEGIN
     -- 只收「近期仍在交易」的真實當前訊號，排除下市/停止交易的殭屍股
     -- （它們的最新資料停在數年前，due_date 早過，不該當即時預測）
     AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
-    AND market_ok_now()   -- 大盤過濾：空頭(寬度<50%)時不開倉
+    -- 大盤過濾改為「僅提示」：弱市(寬度<50%)照樣開倉，看板 badge 提醒風險（使用者 2026-06-10 定案）
     AND NOT EXISTS (
       SELECT 1 FROM analyses a
       WHERE a.symbol = l.symbol AND a.skill = 'strat-5-10-20' AND a.as_of = l.ts

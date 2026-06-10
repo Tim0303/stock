@@ -2,16 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> ✅ **狀態：已實作並驗證（2026-06-08，T0–T12 完成）。** 七個服務（`docker-compose.yml` + `db/`、`mcp/`、
-> `api/`、`web/`、`ml/`、`loader/`、`chiploader/`）皆已落地、整條學習迴路端到端驗證通過。
-> **與下方原始藍圖的關鍵差異（以實作為準）：**
-> - **行情來源 = FinMind，非 yfinance**：yfinance 對台股 keyless 失效，台股日線/名稱/產業/籌碼統一走 FinMind。
-> - **DB 對外 port = 7002**（藍圖部分段落寫 :8000，以 7001 MCP/7002 DB/7003 API/7004 web 為準）。
-> - **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs /
->   08_indicators / 09_chips / 10_strategy_5_10_20 / 11_scan_evolve。
-> - **資料**：universe 55 檔×10Y 真實日線（白名單 13 檔 + 流動性補足，補足排序待 FINMIND_TOKEN 修正、含殭屍股）。
-> - **開發慣例**：改 schema 用 `psql -f /docker-entrypoint-initdb.d/NN.sql` 套到運行 DB，**不要 `down -v`**（會刪資料）。
-> 下方「目標架構 / Schema」仍是有效的設計說明；細節以磁碟現況為準，動手前先讀對應檔案。
+> ✅ **狀態：已實作並持續演進（最後更新 2026-06-10）。** 整條學習迴路端到端運作。
+> **以下為「目前磁碟/DB 現況」（與下方原始藍圖有差異時以此為準）；動手前先讀對應檔案。**
+>
+> **服務（`docker-compose.yml`）**：常駐 `timescaledb`/`mcp`/`api`/`web`/`scheduler`；profile=tools 一次性容器
+> `loader`/`chiploader`/`ml`/`vcp`。port：7001 MCP / 7002 DB / 7003 API / 7004 戰情儀表板。
+> `scheduler` 容器掛 docker socket、crond 每天 15:00 TPE 跑 `scheduler/daily_scan.sh`（行情增量→還原→各分析師記錄→快照→評分）。
+>
+> **行情來源 = FinMind**（非 yfinance；台股日線/名稱/產業/籌碼皆走 FinMind）。**universe ≈ 300 檔×10Y** 真實日線。
+> **還原權值 = 前復權**：`daily_prices.adj_factor`，**最新一筆=1.0、歷史<1.0**（現價=實際成交價）；指標/策略/評分一律用 `price*adj_factor`。
+>
+> **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs / 08_indicators /
+> 09_chips / 10_strategy_5_10_20 / 11_scan_evolve / 12_backtest / 13_adjust(還原權值) / 14_strategy_box /
+> 15_vcp_watchlist / 16_daily_recommendations / 17_support_reclaim(spring) / 18_market_regime / 19_bracket_scoring /
+> 20_bb_trend(布林通道趨勢續抱)。
+>
+> **分析師現況（共用 `analyses`、同台比較）**：儀表板 5 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
+> `strat-bb-trend`(布林通道趨勢續抱) / `ml-logreg`。
+> ★ `strat-bb-trend` = **5-10-20 進場 + 趨勢續抱出場**（站上20MA續抱／跌破20MA出／−8%停損／maxhold60）。與 5-10-20 共用進場，
+>   故**不走 bracket 評分**：主 `evaluate_due_predictions()` 已 `AND skill<>'strat-bb-trend'` 排除，改由 `evaluate_bb_trend()` 評分。
+>   實證：per-signal 期望值≈5-10-20（PF1.34 vs 1.33），但勝率低(32% vs 56%)、上檔不封頂(肥尾單撐滿60天 avg+73%)；5槽位組合報酬大幅領先靠肥尾複利、變異大。
+> **已退役**：`baseline-momentum`（純對照無用）、`strat-box`（長期 PF≈1.0）——view/資料保留、僅從 API/記錄/snapshot 移除，**勿再加回**。
+>
+> **評分 = TP/SL bracket（非固定 horizon）**：`evaluate_due_predictions()`（`19_bracket_scoring.sql`）對每筆預測，
+> 先到「壓力目標(獲利了結)」或「−8% 停損」或「40 交易日到期」結算，扣 0.6% 成本；目標/停損由 `v_trade_targets` 統一算。
+> **大盤過濾**：`market_ok_now()`（`18`，% 個股站上20MA<50% 視為空頭）**僅作風險提示**（看板 badge），
+> 弱市照樣開倉/顯示——使用者 2026-06-10 定案改掉硬閘門（記錄函式 10/17/20 與 API 推薦皆已移除 `AND market_ok_now()`）。
+> 註：實證上此過濾能提升 PF（spring1.53→2.05、5-10-20 1.37→1.73），改為提示是使用者的產品取捨，非數據結論。
+>
+> **開發慣例**：改 schema 用 `docker cp NN.sql → docker exec psql -f` 套到運行 DB，**不要 `down -v`**（會刪資料）。
+> **回測報告**：統一用 `報告/report_template.ps1` 樣板（白底/正紅負綠/tab/sticky表頭/揭露），輸出到 `報告/`（.gitignore）。
+> **實證選股原則**見記憶 `empirical-selection-principles`（成交量看情境、出場決定勝率、趨勢命門、分散>all-in）。
 
 ---
 
@@ -98,9 +119,12 @@ docker compose run --rm ml predict
 - `v_skill_performance` — 各技能績效
 - `v_price_indicators` / `v_latest_signals` — 技術指標與訊號
 
-**關鍵約定：** 三類「分析師」共用 `analyses` 表、同台比較準確率：
-`baseline-momentum` / `ml-logreg` / `strat-5-10-20`。新增任何預測來源都應寫進 `analyses`
-並走同一套評分迴路，才能公平比較。
+**關鍵約定：** 所有「分析師」共用 `analyses` 表、同台比較準確率。多數走統一 bracket 評分；
+`strat-bb-trend` 例外走 `evaluate_bb_trend()`（趨勢續抱出場）。
+**目前現役 5 位**：`strat-vcp` / `strat-5-10-20` / `strat-spring`（破支撐拉回，`17_support_reclaim.sql`）/
+`strat-bb-trend`（布林通道趨勢續抱，`20_bb_trend.sql`，5-10-20進場＋趨勢續抱出場）/ `ml-logreg`；
+另有 `strat-box`（`14`）資料保留但已退役。新增任何預測來源都應寫進 `analyses` 才能公平比較。
+**勿再加回** `baseline-momentum`、`strat-box`（使用者已決定退役）。
 
 ---
 
@@ -113,9 +137,10 @@ docker compose run --rm ml predict
   - view `v_strategy_5_10_20` / `v_strategy_latest`（5/10/20MA + 量能 → 進場 A/B/C / 出場 / 0–100 分數 / 評級）
   - function `record_strategy_signals(horizon)` — 把分數 ≥80 的買進訊號寫進 `analyses`（skill=`strat-5-10-20`）→ 走評分迴路
 
-**排程評分：** 評分公式集中在 DB function `evaluate_due_predictions()`（`db/init/07_jobs.sql`）。
-MCP 工具與 TimescaleDB 每小時 job（`job_evaluate_predictions`）**都呼叫同一個 function**——
-改評分邏輯只改這一處，不要在多處複製。
+**排程評分：** 評分集中在 DB function `evaluate_due_predictions()`，**現為 TP/SL bracket 法（`19_bracket_scoring.sql`，
+已取代 07_jobs 的固定 horizon 版）**：先到「壓力目標/−8%停損/40交易日到期」結算、扣 0.6% 成本，目標/停損由 `v_trade_targets` 統一算。
+MCP 工具與每小時 job（`job_evaluate_predictions`）**都呼叫同一個 function**——改評分邏輯只改這一處。
+（其他策略檔：`14_strategy_box.sql` 箱型、`17_support_reclaim.sql` 破支撐拉回 spring、`12_backtest.sql` 規則出場回測。）
 
 ---
 
@@ -129,6 +154,7 @@ get_latest_price / add_symbol
 get_indicators / get_signals / scan_signals(選股掃描)
 get_chips
 get_strategy / scan_strategy / run_strategy_5_10_20
+get_vcp_watchlist(VCP 醞釀中/突破監控清單)
 record_analysis / evaluate_predictions / get_accuracy
 upsert_skill(技能演化)
 ```
@@ -146,6 +172,8 @@ upsert_skill(技能演化)
 - **進場訊號：** A 突破買 / B 回測 10MA 不破買 / C 重新站回 5MA 買
 - **出場：** 跌破 5MA 減碼 ½ → 跌破 10MA 全出 → 跌破 20MA 策略失效
 - **訊號分數模型（第 22 節）：** 0–100 分，≥80 買進、60–79 觀察、<60 不進場
+- **實作差異**：B（回測10MA）回測最差已**停用**（`enable_signal_B=false`），現役只 A、C。
+  成交量觀念見記憶 `empirical-selection-principles`：突破(A)要溫和放量、洗盤(spring)要量縮——情境相反。
 
 ---
 
@@ -157,6 +185,9 @@ upsert_skill(技能演化)
 
 ---
 
-## 待辦（規劃）
+## 待辦 / 後續
 
-多檔批次選股流程、回測、儀表板標的詳情頁 / WebSocket、對外加認證。
+- **減資還原未處理**（不在股利表，worst 回撤可能含減資跳水）。
+- **生存者偏差**：回測池僅現存 ~300 檔、無下市股，會高估報酬（尤其空頭年）——報告須揭露。
+- **ML 升級**：ml-logreg 僅 9 技術特徵、in-sample ~51%≈擲硬幣；可加情境量(量/50日均量)、距壓力/支撐、大盤寬度、收縮次數等實證特徵。
+- 演化器（champion-challenger）尚未自動換冠軍；儀表板標的詳情頁 / WebSocket、對外加認證待補。

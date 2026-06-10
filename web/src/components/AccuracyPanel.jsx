@@ -4,6 +4,7 @@ const SKILL_LABELS = {
   'strat-vcp': { label: 'VCP 突破', short: 'VCP', color: '#00ff88' },
   'strat-5-10-20': { label: '5·10·20 順勢', short: 'MA', color: '#00d4ff' },
   'strat-spring': { label: '破支撐拉回', short: 'SPR', color: '#2dd4bf' },
+  'strat-bb-trend': { label: '布林通道趨勢續抱', short: 'BB', color: '#818cf8' },
   'ml-logreg': { label: 'ML 預測', short: 'ML', color: '#ff6ec7' },
 }
 
@@ -90,6 +91,7 @@ const DEFAULT_SKILLS = [
   { skill: 'strat-vcp', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'strat-5-10-20', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'strat-spring', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
+  { skill: 'strat-bb-trend', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'ml-logreg', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
 ]
 

@@ -535,7 +535,6 @@ def _compute_analyst_picks() -> dict:
         JOIN symbols sy USING (symbol)
         WHERE l.rating = 'buy'
           AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
-          AND market_ok_now()
         ORDER BY l.score DESC NULLS LAST
         """,
     )
@@ -575,7 +574,6 @@ def _compute_analyst_picks() -> dict:
         JOIN symbols sy USING (symbol)
         WHERE r.signal_type = 'spring'
           AND r.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
-          AND market_ok_now()
         ORDER BY r.score DESC NULLS LAST
         """,
     )
@@ -602,7 +600,42 @@ def _compute_analyst_picks() -> dict:
         ],
     })
 
-    # ── 5. ml-logreg (analyses) ───────────────────────────────────────────────
+    # ── 5. strat-bb-trend 布林通道趨勢續抱（進場=5-10-20、出場=趨勢續抱）─────────────
+    bb_rows = _safe_picks(
+        conn,
+        "v_bb_trend_latest",
+        """
+        SELECT l.symbol, sy.name, l.score, l.signal_type,
+               l.entry_price, l.stop_price, l.exit_rule, l.ts AS as_of
+        FROM v_bb_trend_latest l
+        JOIN symbols sy USING (symbol)
+        WHERE l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+        ORDER BY l.score DESC NULLS LAST
+        """,
+    )
+    bb_as_of = bb_rows[0]["as_of"].isoformat() if bb_rows and bb_rows[0].get("as_of") else None
+    analysts.append({
+        "skill": "strat-bb-trend",
+        "label": "布林通道趨勢續抱",
+        "as_of": bb_as_of,
+        "count": len(bb_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {
+                    "signal_type": r.get("signal_type"),
+                    "entry_price": r.get("entry_price"),
+                    "stop_price": r.get("stop_price"),
+                    "exit_rule": r.get("exit_rule"),
+                },
+            }
+            for r in bb_rows
+        ],
+    })
+
+    # ── 6. ml-logreg (analyses) ───────────────────────────────────────────────
     # 註：baseline-momentum（動能對照）已於使用者要求下移除（純對照、無實用價值）。
     for skill_id, label in [
         ("ml-logreg", "ML 預測"),

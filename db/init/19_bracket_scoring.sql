@@ -64,7 +64,8 @@ BEGIN
     SELECT exit_price, reason FROM matured WHERE NOT EXISTS (SELECT 1 FROM first_hit)
     LIMIT 1
   ) x
-  WHERE o.analysis_id IS NULL;
+  WHERE o.analysis_id IS NULL
+    AND a.skill <> 'strat-bb-trend';   -- 趨勢續抱另由 evaluate_bb_trend() 評分（跌破20MA，非 bracket）
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;
 END;

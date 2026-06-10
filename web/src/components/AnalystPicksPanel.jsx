@@ -6,6 +6,7 @@ const ANALYST_THEME = {
   'strat-5-10-20':      { accent: '#00d4ff', glow: 'rgba(0,212,255' },
   'strat-box':          { accent: '#b38fd4', glow: 'rgba(179,143,212' },
   'strat-spring':       { accent: '#2dd4bf', glow: 'rgba(45,212,191' },
+  'strat-bb-trend':     { accent: '#818cf8', glow: 'rgba(129,140,248' },
   'baseline-momentum':  { accent: '#ffb800', glow: 'rgba(255,184,0' },
   'ml-logreg':          { accent: '#ff6ec7', glow: 'rgba(255,110,199' },
 }
@@ -88,6 +89,10 @@ function AnalystCard({ analyst, onSelect, expanded = false }) {
       { header: '目標', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#00ff88' }}>{fmtP(p.extra?.target_price)}</span> },
       { header: '目標%', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{p.extra?.target_pct != null ? `+${fmtNum(p.extra.target_pct, 1)}%` : '—'}</span> },
       { header: '停損', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#ff6b81' }}>{fmtP(p.extra?.stop_price)}</span> },
+    ] : analyst.skill === 'strat-bb-trend' ? [
+      { header: '進場', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmtP(p.extra?.entry_price, 2)}</span> },
+      { header: '停損', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#ff6b81' }}>{fmtP(p.extra?.stop_price, 2)}</span> },
+      { header: '出場', align: 'center', cell: () => <span className="text-xs" style={{ color: '#818cf8', fontFamily: 'Noto Sans TC', whiteSpace: 'nowrap' }}>趨勢續抱·破20MA</span> },
     ] : analyst.skill === 'strat-vcp' ? [
       { header: '狀態', align: 'left', cell: (p) => <ExtraCell skill={analyst.skill} extra={p.extra} /> },
     ] : []
@@ -179,9 +184,9 @@ function MarketBadge({ market }) {
         color: ok ? '#00ff88' : '#ff6b81',
         whiteSpace: 'nowrap',
       }}
-      title="大盤寬度＝% 個股站上 20MA；<50% 視為空頭，策略類分析師暫不開倉"
+      title="大盤寬度＝% 個股站上 20MA；<50% 視為空頭。僅作風險提示，策略仍照常開倉"
     >
-      {ok ? '◉' : '◯'} 大盤寬度 {market.breadth_pct}% {ok ? '健康' : '偏弱·暫不開倉'}
+      {ok ? '◉' : '◯'} 大盤寬度 {market.breadth_pct}% {ok ? '健康' : '偏弱·留意風險'}
     </span>
   )
 }

@@ -123,7 +123,7 @@ BEGIN
   FROM v_support_reclaim_latest r
   WHERE r.signal_type = 'spring'
     AND r.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
-    AND market_ok_now()   -- 大盤過濾：空頭時不開倉
+    -- 大盤過濾改為「僅提示」：弱市照樣開倉，看板 badge 提醒風險（使用者 2026-06-10 定案）
     AND NOT EXISTS (
       SELECT 1 FROM analyses a
       WHERE a.symbol = r.symbol AND a.skill='strat-spring' AND a.as_of = r.ts
