@@ -45,18 +45,21 @@ SELECT
   symbol, ts, open, high, low, close, volume, ma20, sup,
   above_sup_pct, range20_pct, vol_ratio, body_ratio,
   spring_signal, reclaim_ma20,
-  -- 0-100 分：核心 + 真盤整(窄幅) + 收紅力道 + 放量收復 + 貼著支撐(不追)
+  -- 0-100 分：核心 + 真盤整(窄幅) + 收紅力道 + 深度量縮(Wyckoff spring 賣壓枯竭) + 貼著支撐
+  -- 註(2026-06-10 特徵回測)：spring 量縮<0.7 PF1.80 遠勝放量1.13 → 改獎勵量縮、非放量。
   ( CASE WHEN spring_signal THEN 50 ELSE 0 END
   + CASE WHEN range20_pct IS NOT NULL AND range20_pct <= 18 THEN 15 ELSE 0 END
   + CASE WHEN body_ratio IS NOT NULL THEN round(15 * greatest(0, least(1, body_ratio))) ELSE 0 END
-  + CASE WHEN vol_ratio IS NOT NULL AND vol_ratio >= 1.0 THEN 10 ELSE 0 END
+  + CASE WHEN vol_ratio IS NOT NULL AND vol_ratio < 0.7 THEN 10 ELSE 0 END
   + CASE WHEN above_sup_pct IS NOT NULL AND above_sup_pct BETWEEN 0 AND 3 THEN 10 ELSE 0 END
   )::int                                                                       AS score,
   CASE
-    -- spring 只認「上升趨勢中的假跌破收復」：站上 20MA 且 20MA 上彎（回測 PF≈1.70）
+    -- spring 只認「上升趨勢中的假跌破收復」：站上 20MA 且 20MA 上彎（回測 PF≈1.70）；
     -- 逆勢(20MA下)的破底反彈是 falling knife（PF≈0.70），不發訊號。
+    -- 量縮優先(vol_ratio<1.0)：Wyckoff spring 須賣壓枯竭；放量跌破多為真出貨（量縮版勝率65%>原60%、年度更穩）。
     WHEN spring_signal AND range20_pct IS NOT NULL AND range20_pct <= 25
-         AND close > ma20 AND ma20 > ma20_prev THEN 'spring'
+         AND close > ma20 AND ma20 > ma20_prev
+         AND vol_ratio < 1.0 THEN 'spring'
     WHEN reclaim_ma20 THEN 'reclaim_ma20'
     ELSE NULL
   END                                                                          AS signal_type,

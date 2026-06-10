@@ -1,15 +1,16 @@
 import React from 'react'
 
 const SKILL_LABELS = {
-  'baseline-momentum': { label: 'MOMENTUM', short: 'MOM', color: '#b38fd4' },
-  'ml-logreg': { label: 'ML LOGREG', short: 'ML', color: '#00d4ff' },
-  'strat-5-10-20': { label: '5·10·20 MA', short: 'MA', color: '#00ff88' },
+  'strat-vcp': { label: 'VCP 突破', short: 'VCP', color: '#00ff88' },
+  'strat-5-10-20': { label: '5·10·20 順勢', short: 'MA', color: '#00d4ff' },
+  'strat-spring': { label: '破支撐拉回', short: 'SPR', color: '#2dd4bf' },
+  'ml-logreg': { label: 'ML 預測', short: 'ML', color: '#ff6ec7' },
 }
 
 function StatLine({ label, value, unit = '', color = '#8ba3c7', highlight = false }) {
   return (
     <div className="flex items-center justify-between py-1" style={{ borderBottom: '1px solid #0d1426' }}>
-      <span className="mono text-xs" style={{ color: '#4a6080' }}>{label}</span>
+      <span className="text-xs" style={{ color: '#4a6080', fontFamily: 'Noto Sans TC' }}>{label}</span>
       <span
         className="mono text-sm font-bold"
         style={{ color: highlight ? color : '#8ba3c7' }}
@@ -60,21 +61,21 @@ function AccuracyCard({ skill, n_evaluated, win_rate, avg_return, profit_factor 
       ) : (
         <div>
           <StatLine
-            label="WIN RATE"
+            label="勝率"
             value={win_rate !== null ? (win_rate * 100).toFixed(1) : null}
             unit="%"
             color={meta.color}
             highlight={true}
           />
           <StatLine
-            label="AVG RETURN"
+            label="平均報酬"
             value={avg_return !== null ? (avg_return * 100).toFixed(2) : null}
             unit="%"
             color={avg_return >= 0 ? '#00ff88' : '#ff3366'}
             highlight={true}
           />
           <StatLine
-            label="PROFIT FACTOR"
+            label="獲利因子"
             value={profit_factor !== null ? profit_factor.toFixed(2) : null}
             color={profit_factor >= 1 ? '#00ff88' : '#ff3366'}
             highlight={true}
@@ -86,7 +87,9 @@ function AccuracyCard({ skill, n_evaluated, win_rate, avg_return, profit_factor 
 }
 
 const DEFAULT_SKILLS = [
+  { skill: 'strat-vcp', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'strat-5-10-20', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
+  { skill: 'strat-spring', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
   { skill: 'ml-logreg', n_evaluated: 0, win_rate: null, avg_return: null, profit_factor: null },
 ]
 

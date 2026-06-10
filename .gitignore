@@ -23,3 +23,6 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+
+# 產出報告（HTML，非原始碼）
+報告/
