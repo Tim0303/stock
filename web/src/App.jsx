@@ -4,6 +4,7 @@ import AccuracyPanel from './components/AccuracyPanel.jsx'
 import SkillsPanel from './components/SkillsPanel.jsx'
 import ChartPanel from './components/ChartPanel.jsx'
 import AnalystPicksPanel from './components/AnalystPicksPanel.jsx'
+import EodSignalsPanel from './components/EodSignalsPanel.jsx'
 import Header from './components/Header.jsx'
 
 const REFRESH_INTERVAL = 30 // seconds
@@ -20,6 +21,8 @@ export default function App() {
   const [skills, setSkills] = useState([])
   const [analysts, setAnalysts] = useState([])
   const [analystsComputing, setAnalystsComputing] = useState(false)
+  const [eodSignals, setEodSignals] = useState([])
+  const [eodScanTime, setEodScanTime] = useState(null)
   const [market, setMarket] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -38,6 +41,7 @@ export default function App() {
       apiFetch('/api/accuracy'),
       apiFetch('/api/skills'),
       apiFetch('/api/analyst-picks'),
+      apiFetch('/api/eod-signals'),
     ])
 
     if (results[0].status === 'fulfilled') {
@@ -75,6 +79,13 @@ export default function App() {
       errs.analysts = results[3].reason?.message
     }
 
+    if (results[4].status === 'fulfilled') {
+      setEodSignals(results[4].value.data || [])
+      setEodScanTime(results[4].value.scan_time || null)
+    } else {
+      errs.eod = results[4].reason?.message
+    }
+
     setErrors(errs)
     setLastRefresh(new Date())
     setLoading(false)
@@ -110,6 +121,18 @@ export default function App() {
       />
 
       <main className="p-4 max-w-screen-2xl mx-auto">
+        {/* 尾盤即時訊號（盤中 13:10 即時報價試算，預覽不記錄）— 時效優先置頂 */}
+        <div className="mb-4 fade-in fade-in-delay-1">
+          <EodSignalsPanel
+            data={eodSignals}
+            scanTime={eodScanTime}
+            loading={loading}
+            error={errors.eod}
+            onSelect={setSelectedSymbol}
+            selectedSymbol={selectedSymbol}
+          />
+        </div>
+
         {/* 需求1：5 位分析師推薦（各自列出，含 VCP 區塊） */}
         <div className="mb-4 fade-in fade-in-delay-1">
           <AnalystPicksPanel

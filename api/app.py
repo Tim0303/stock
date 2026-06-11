@@ -408,6 +408,51 @@ def vcp_watchlist():
     return {"scan_date": scan_date, "count": len(rows), "data": rows}
 
 
+# ── /api/eod-signals ──────────────────────────────────────────────────────────
+@app.get(
+    "/api/eod-signals",
+    summary="尾盤即時訊號（盤中掃描快照）",
+    tags=["strategy"],
+    response_description="最新一次盤中掃描（預設 13:10）凍結的買進候選，依分析師分組",
+)
+def eod_signals(limit: int = Query(default=200, ge=1, le=500)):
+    """
+    讀 `eod_intraday_signals` 的**最新 scan_time** 快照（盤中以即時報價算出的今日候選）。
+    表不存在 / 尚無掃描時回空（容錯）。回傳：{scan_time, scan_date, count, data:[...]}。
+    純預覽（不寫 analyses）；正式記錄仍由 15:00 收盤那班負責。
+    """
+    try:
+        conn = get_conn()
+        has_table = table_exists(conn, "eod_intraday_signals")
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB error: {exc}")
+
+    if not has_table:
+        return {"scan_time": None, "scan_date": None, "count": 0, "data": [],
+                "note": "eod_intraday_signals table not yet available"}
+
+    try:
+        rows = query(
+            """
+            SELECT skill, symbol, name, score, signal_type,
+                   close, entry_price, target_price, stop_price, meta,
+                   scan_time, scan_date
+            FROM eod_intraday_signals
+            WHERE scan_time = (SELECT max(scan_time) FROM eod_intraday_signals)
+            ORDER BY skill, score DESC NULLS LAST
+            LIMIT %(limit)s
+            """,
+            {"limit": limit},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    scan_time = rows[0]["scan_time"].isoformat() if rows else None
+    scan_date = rows[0]["scan_date"] if rows else None
+    return {"scan_time": scan_time, "scan_date": scan_date, "count": len(rows), "data": rows}
+
+
 # ── /api/symbols ──────────────────────────────────────────────────────────────
 @app.get(
     "/api/symbols",

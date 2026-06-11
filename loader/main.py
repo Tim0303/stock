@@ -312,6 +312,104 @@ def run_adjust():
     print("還原完成")
 
 
+# ── 盤中即時報價（TWSE MIS）→ 今日「暫定收盤」 ──────────────────────────────
+# 尾盤即時掃描用：13:10 抓現價當今日暫定 OHLC 寫入 daily_prices，讓策略 view 即時算今日訊號；
+# 15:00 正式收盤那班會以 FinMind 官方收盤 UPSERT 覆蓋同一列。adj_factor 維持 1.0（最新一筆慣例）。
+MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+
+
+def _mis_num(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _mis_price(s):
+    """現價優先序：z 成交價 → pz 上一筆成交價 → 最佳買賣中點 → 高低中點。無則 None。"""
+    for k in ("z", "pz"):
+        v = _mis_num(s.get(k))
+        if v:
+            return v
+    bv = _mis_num((s.get("b") or "").split("_")[0])
+    av = _mis_num((s.get("a") or "").split("_")[0])
+    if bv and av:
+        return round((bv + av) / 2, 4)
+    if bv or av:
+        return bv or av
+    h, l = _mis_num(s.get("h")), _mis_num(s.get("l"))
+    if h and l:
+        return round((h + l) / 2, 4)
+    return None
+
+
+def fetch_mis_batch(ex_chs):
+    """抓一批（pipe 串接）即時報價，回傳 msgArray；失敗回 []。"""
+    params = {"ex_ch": "|".join(ex_chs), "json": "1", "delay": "0",
+              "_": str(int(time.time() * 1000))}
+    try:
+        r = requests.get(MIS_URL, params=params,
+                         headers={"User-Agent": "Mozilla/5.0",
+                                  "Referer": "https://mis.twse.com.tw/stock/index.jsp"},
+                         timeout=30)
+        b = r.json()
+    except Exception as e:
+        print(f"  [warn] MIS batch 失敗: {e}")
+        return []
+    if b.get("rtcode") != "0000":
+        print(f"  [warn] MIS rtcode={b.get('rtcode')} {b.get('rtmessage')}")
+        return []
+    return b.get("msgArray", []) or []
+
+
+def run_intraday():
+    """抓全 universe 台股即時報價，UPSERT 今日暫定 OHLCV 到 daily_prices。"""
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM symbols WHERE market='TW' ORDER BY symbol")
+    syms = {r[0] for r in cur.fetchall()}
+
+    def to_chan(sym):
+        code = sym.split(".")[0]
+        return ("otc_" if sym.endswith(".TWO") else "tse_") + code + ".tw"
+
+    chans = [to_chan(s) for s in sorted(syms)]
+    today = date.today()
+    rows, missing = [], 0
+    BATCH = 50
+    for i in range(0, len(chans), BATCH):
+        for s in fetch_mis_batch(chans[i:i + BATCH]):
+            code = (s.get("c") or "").strip()
+            sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
+            if sym not in syms:
+                continue
+            close = _mis_price(s)   # z→pz→買賣中點，盡量取得現價
+            if close is None:
+                missing += 1
+                continue
+            o, h, l = _mis_num(s.get("o")), _mis_num(s.get("h")), _mis_num(s.get("l"))
+            vol_lots = _mis_num(s.get("v"))                 # MIS 量單位=張
+            vol = int(vol_lots * 1000) if vol_lots else None  # → 股，對齊歷史
+            rows.append((sym, today, o, h or close, l or close, close, vol, 1.0))
+        time.sleep(0.4)
+
+    if not rows:
+        print("[intraday] 無即時報價（非盤中或全部無成交）")
+        cur.close(); conn.close(); return
+    execute_values(cur, """
+        INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
+        VALUES %s
+        ON CONFLICT (symbol, ts) DO UPDATE SET
+            open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+            close = EXCLUDED.close, volume = EXCLUDED.volume
+    """, rows)
+    conn.commit()
+    print(f"[intraday] {today} 暫定盤 UPSERT {len(rows)} 檔（無成交跳過 {missing}）")
+    cur.close()
+    conn.close()
+
+
 # ── main ───────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -320,10 +418,16 @@ def main():
     ap.add_argument("--target", type=int, default=55)
     ap.add_argument("--years", type=int, default=10)
     ap.add_argument("--adjust", action="store_true", help="計算還原權值係數（FinMind 除權息）")
+    ap.add_argument("--intraday", action="store_true",
+                    help="盤中即時報價（TWSE MIS）→ 今日暫定收盤，供尾盤即時掃描")
     args = ap.parse_args()
 
     if args.adjust:
         run_adjust()
+        return
+
+    if args.intraday:
+        run_intraday()
         return
 
     tw_info = {}

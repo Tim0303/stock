@@ -14,6 +14,14 @@ docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-loader $T
 # 2. 還原權值（更新除權息係數）
 docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-loader --adjust 2>&1 | tail -1
 
+# 2b. 籌碼面增量：走 TWSE 依日期端點（免 token/額度，一次一日抓全上市）。
+#     用 --days 3 抓近 3 個日曆日：T86/MI_MARGN 約收盤後才公布，這樣即使當日尚未公布或前一日漏跑也能補齊。
+#     註：僅涵蓋上市(.TW)；上櫃(.TWO，4 檔)未涵蓋（需 TPEX）。
+echo "抓三大法人 (TWSE T86) ..."
+docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-chiploader --twse-inst   --days 3 2>&1 | tail -1
+echo "抓融資融券 (TWSE MI_MARGN) ..."
+docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-chiploader --twse-margin --days 3 2>&1 | tail -1
+
 # 3. VCP 監控清單（寫今日 vcp_watchlist → 儀表板/MCP 自動顯示）
 docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-vcp watchlist 2>&1 | tail -1
 
@@ -21,8 +29,13 @@ docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-vcp watch
 echo "記錄當日推薦 (analyses) ..."
 #   4a. VCP 突破訊號（Python）
 docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-vcp scan 2>&1 | tail -1
-#   4b. ML 預測（Python；無模型則就地訓練）
-docker run --rm --network stock_default -e DATABASE_URL="$DBURL" stock-ml predict 2>&1 | tail -1
+#   4b. ML：每週六用累積新資料重訓（bracket 標籤 + OOS 驗證）；每日 predict 載入持久化模型(ml_models volume)。
+#       門檻 0.60 高選擇性：弱市常 0 買進屬正常（抽手）。
+if [ "$(date +%u)" = "6" ]; then
+  echo "ML 週重訓 ..."
+  docker run --rm --network stock_default -v stock_ml_models:/app/models -e DATABASE_URL="$DBURL" stock-ml train 2>&1 | tail -3
+fi
+docker run --rm --network stock_default -v stock_ml_models:/app/models -e DATABASE_URL="$DBURL" stock-ml predict 2>&1 | tail -1
 #   4c. 5-10-20 / 破支撐拉回 / 布林通道趨勢續抱 買進訊號（DB function，live + 防重；box 已退役）
 docker exec stock-timescaledb psql -U stock_admin -d stockdb \
     -c "SELECT record_strategy_signals();" \

@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > **服務（`docker-compose.yml`）**：常駐 `timescaledb`/`mcp`/`api`/`web`/`scheduler`；profile=tools 一次性容器
 > `loader`/`chiploader`/`ml`/`vcp`。port：7001 MCP / 7002 DB / 7003 API / 7004 戰情儀表板。
-> `scheduler` 容器掛 docker socket、crond 每天 15:00 TPE 跑 `scheduler/daily_scan.sh`（行情增量→還原→各分析師記錄→快照→評分）。
+> `scheduler` 容器掛 docker socket、crond 兩班：**13:10 TPE `scheduler/intraday_scan.sh`（尾盤即時掃描）** + 15:00 TPE `scheduler/daily_scan.sh`。
+daily_scan：行情增量→還原→**籌碼增量(三大法人 T86 / 融資融券 MI_MARGN，走 TWSE 依日期端點 chiploader --twse-inst/--twse-margin --days 3，免額度)**→各分析師記錄→快照→評分。
+intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤寫 daily_prices，量張→股×1000)→`vcp watchlist`→`snapshot_eod_signals()`(凍結 5-10-20/spring/bb-trend/vcp 候選到 `eod_intraday_signals`，**純預覽不寫 analyses**)→（有設 `DISCORD_WEBHOOK_URL` 則 curl 推 Discord）。儀表板「尾盤即時訊號」區塊讀 `/api/eod-signals`。
 >
 > **行情來源 = FinMind**（非 yfinance；台股日線/名稱/產業/籌碼皆走 FinMind）。**universe ≈ 300 檔×10Y** 真實日線。
 > **還原權值 = 前復權**：`daily_prices.adj_factor`，**最新一筆=1.0、歷史<1.0**（現價=實際成交價）；指標/策略/評分一律用 `price*adj_factor`。
@@ -15,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs / 08_indicators /
 > 09_chips / 10_strategy_5_10_20 / 11_scan_evolve / 12_backtest / 13_adjust(還原權值) / 14_strategy_box /
 > 15_vcp_watchlist / 16_daily_recommendations / 17_support_reclaim(spring) / 18_market_regime / 19_bracket_scoring /
-> 20_bb_trend(布林通道趨勢續抱)。
+> 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照 + snapshot_eod_signals())。
 >
 > **分析師現況（共用 `analyses`、同台比較）**：儀表板 5 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
 > `strat-bb-trend`(布林通道趨勢續抱) / `ml-logreg`。
@@ -180,7 +182,9 @@ upsert_skill(技能演化)
 ## 資料誠信注意事項
 
 - `06_seed` 為合成假價，只生平日（loader 會以真實日線覆蓋）；不可把 seed 資料當真實行情分析。
-- ML 目前資料量小，是 **baseline 展示**，非追 alpha——不要對其準確率做過度推論。
+- ML（ml-logreg）已升級（2026-06-10）：bracket 標籤 + 14 特徵 + 時間切分 OOS 驗證 + 機率門檻 0.60 選股。
+  OOS AUC≈0.57（有真實訊號、非擲硬幣）、門檻 0.60 命中率 51.5% vs 基準 47.4%、平均 +0.43%。
+  仍偏 baseline：訊號弱、門檻高（弱市常 0 買進屬正常抽手）——不要對其準確率做過度推論。
 - 美股無籌碼面資料；涉及 `chip_*` 的邏輯需判斷市場別。
 
 ---
@@ -189,5 +193,6 @@ upsert_skill(技能演化)
 
 - **減資還原未處理**（不在股利表，worst 回撤可能含減資跳水）。
 - **生存者偏差**：回測池僅現存 ~300 檔、無下市股，會高估報酬（尤其空頭年）——報告須揭露。
-- **ML 升級**：ml-logreg 僅 9 技術特徵、in-sample ~51%≈擲硬幣；可加情境量(量/50日均量)、距壓力/支撐、大盤寬度、收縮次數等實證特徵。
+- **ML 升級（已完成 2026-06-10）**：ml-logreg 改 bracket 標籤 + 14 特徵（含情境量/距壓力支撐/波動收縮/大盤寬度）+ 時間切分 OOS（AUC0.57）+ 門檻 0.60。
+  模型存 `ml_models` volume，daily_scan 每週六重訓、每日 predict 載入。後續可試：非線性模型(GBDT)、籌碼特徵(台股)、依大盤調門檻。
 - 演化器（champion-challenger）尚未自動換冠軍；儀表板標的詳情頁 / WebSocket、對外加認證待補。

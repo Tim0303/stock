@@ -93,6 +93,8 @@ services:
     profiles: ["tools"]
     environment:
       DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+    volumes:
+      - ml_models:/app/models          # 模型持久化：train 存一次、predict 跨 run 載入（免每次重訓）
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -113,6 +115,10 @@ services:
     container_name: stock-scheduler
     environment:
       STOCK_APP_PASSWORD: ${STOCK_APP_PASSWORD}
+      # 籌碼抓取（chiploader）走 FinMind，需 token 提升額度；daily_scan.sh 透傳給 chiploader 容器
+      FINMIND_TOKEN: ${FINMIND_TOKEN}
+      # 尾盤即時掃描（intraday_scan.sh 13:10）推播 Discord 用的 Incoming Webhook URL（留空則略過推播）
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
@@ -122,3 +128,4 @@ services:
 
 volumes:
   timescale_data:
+  ml_models:
