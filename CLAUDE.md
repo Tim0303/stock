@@ -17,10 +17,13 @@ intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤�
 > **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs / 08_indicators /
 > 09_chips / 10_strategy_5_10_20 / 11_scan_evolve / 12_backtest / 13_adjust(還原權值) / 14_strategy_box /
 > 15_vcp_watchlist / 16_daily_recommendations / 17_support_reclaim(spring) / 18_market_regime / 19_bracket_scoring /
-> 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照 + snapshot_eod_signals())。
+> 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照) / 22_bb_breakout(布林開口放量突破)。
 >
-> **分析師現況（共用 `analyses`、同台比較）**：儀表板 5 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
-> `strat-bb-trend`(布林通道趨勢續抱) / `ml-logreg`。
+> **分析師現況（共用 `analyses`、同台比較）**：儀表板 6 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
+> `strat-bb-trend`(布林通道趨勢續抱) / `strat-bb-breakout`(布林開口放量突破) / `ml-logreg`。
+> ★ `strat-bb-breakout`(`22_bb_breakout.sql`) = **收盤>5MA且5MA上彎+衝出布林上軌+帶寬≥1.55×5日前+量≥2.55×20日均量**進場；
+>   出場**單一標準=跌破20MA**（無−8%、無時間上限）→ 走專屬 `evaluate_bb_breakout()`，主 evaluate 已 `AND skill<>'strat-bb-breakout'` 排除。
+>   回測(現存股)per-signal PF≈1.77、平均+3.36%、肥尾、2022空頭年負；**生存者偏差未修正→樂觀**。比值四捨五入到小數2位後比較。
 > ★ `strat-bb-trend` = **5-10-20 進場 + 趨勢續抱出場**（站上20MA續抱／跌破20MA停利／−8%停損／**無時間上限**，2026-06-10 移除原 maxhold60）。與 5-10-20 共用進場，
 >   故**不走 bracket 評分**：主 `evaluate_due_predictions()` 已 `AND skill<>'strat-bb-trend'` 排除，改由 `evaluate_bb_trend()` 評分。
 >   實證：per-signal 期望值≈5-10-20（PF1.37 vs 1.33），但勝率低(32% vs 56%)、上檔不封頂(肥尾單沿20MA走大波段)；5槽位組合報酬大幅領先(836筆win33%+187萬)靠肥尾複利、變異大。
@@ -122,9 +125,10 @@ docker compose run --rm ml predict
 - `v_price_indicators` / `v_latest_signals` — 技術指標與訊號
 
 **關鍵約定：** 所有「分析師」共用 `analyses` 表、同台比較準確率。多數走統一 bracket 評分；
-`strat-bb-trend` 例外走 `evaluate_bb_trend()`（趨勢續抱出場）。
-**目前現役 5 位**：`strat-vcp` / `strat-5-10-20` / `strat-spring`（破支撐拉回，`17_support_reclaim.sql`）/
-`strat-bb-trend`（布林通道趨勢續抱，`20_bb_trend.sql`，5-10-20進場＋趨勢續抱出場）/ `ml-logreg`；
+`strat-bb-trend` / `strat-bb-breakout` 例外走各自的 `evaluate_bb_trend()` / `evaluate_bb_breakout()`（皆跌破20MA出場）。
+**目前現役 6 位**：`strat-vcp` / `strat-5-10-20` / `strat-spring`（破支撐拉回，`17_support_reclaim.sql`）/
+`strat-bb-trend`（布林通道趨勢續抱，`20_bb_trend.sql`，5-10-20進場＋趨勢續抱出場）/
+`strat-bb-breakout`（布林開口放量突破，`22_bb_breakout.sql`，突破進場＋跌破20MA出場）/ `ml-logreg`；
 另有 `strat-box`（`14`）資料保留但已退役。新增任何預測來源都應寫進 `analyses` 才能公平比較。
 **勿再加回** `baseline-momentum`、`strat-box`（使用者已決定退役）。
 

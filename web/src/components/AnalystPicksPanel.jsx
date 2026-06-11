@@ -7,6 +7,7 @@ const ANALYST_THEME = {
   'strat-box':          { accent: '#b38fd4', glow: 'rgba(179,143,212' },
   'strat-spring':       { accent: '#2dd4bf', glow: 'rgba(45,212,191' },
   'strat-bb-trend':     { accent: '#818cf8', glow: 'rgba(129,140,248' },
+  'strat-bb-breakout':  { accent: '#f59e0b', glow: 'rgba(245,158,11' },
   'baseline-momentum':  { accent: '#ffb800', glow: 'rgba(255,184,0' },
   'ml-logreg':          { accent: '#ff6ec7', glow: 'rgba(255,110,199' },
 }
@@ -93,6 +94,11 @@ function AnalystCard({ analyst, onSelect, expanded = false }) {
       { header: '進場', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmtP(p.extra?.entry_price, 2)}</span> },
       { header: '停損', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#ff6b81' }}>{fmtP(p.extra?.stop_price, 2)}</span> },
       { header: '出場', align: 'center', cell: () => <span className="text-xs" style={{ color: '#818cf8', fontFamily: 'Noto Sans TC', whiteSpace: 'nowrap' }}>趨勢續抱·破20MA</span> },
+    ] : analyst.skill === 'strat-bb-breakout' ? [
+      { header: '進場', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmtP(p.extra?.entry_price, 2)}</span> },
+      { header: '量比', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#f59e0b' }}>{p.extra?.vol_ratio != null ? `${fmtNum(p.extra.vol_ratio, 1)}x` : '—'}</span> },
+      { header: '開口', align: 'right', cell: (p) => <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{p.extra?.bw_ratio != null ? `${fmtNum(p.extra.bw_ratio, 1)}x` : '—'}</span> },
+      { header: '出場', align: 'center', cell: () => <span className="text-xs" style={{ color: '#f59e0b', fontFamily: 'Noto Sans TC', whiteSpace: 'nowrap' }}>跌破20MA</span> },
     ] : analyst.skill === 'strat-vcp' ? [
       { header: '狀態', align: 'left', cell: (p) => <ExtraCell skill={analyst.skill} extra={p.extra} /> },
     ] : []

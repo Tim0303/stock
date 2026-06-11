@@ -680,7 +680,42 @@ def _compute_analyst_picks() -> dict:
         ],
     })
 
-    # ── 6. ml-logreg (analyses) ───────────────────────────────────────────────
+    # ── 6. strat-bb-breakout 布林開口放量突破（出場=跌破20MA單一標準）────────────
+    bbk_rows = _safe_picks(
+        conn,
+        "v_bb_breakout_latest",
+        """
+        SELECT l.symbol, sy.name, l.score, l.signal_type,
+               l.entry_price, l.vol_ratio, l.bw_ratio, l.exit_rule, l.ts AS as_of
+        FROM v_bb_breakout_latest l
+        JOIN symbols sy USING (symbol)
+        ORDER BY l.score DESC NULLS LAST
+        """,
+    )
+    bbk_as_of = bbk_rows[0]["as_of"].isoformat() if bbk_rows and bbk_rows[0].get("as_of") else None
+    analysts.append({
+        "skill": "strat-bb-breakout",
+        "label": "布林開口放量突破",
+        "as_of": bbk_as_of,
+        "count": len(bbk_rows),
+        "picks": [
+            {
+                "symbol": r["symbol"],
+                "name": r.get("name"),
+                "score": r.get("score"),
+                "extra": {
+                    "signal_type": r.get("signal_type"),
+                    "entry_price": r.get("entry_price"),
+                    "vol_ratio": r.get("vol_ratio"),
+                    "bw_ratio": r.get("bw_ratio"),
+                    "exit_rule": r.get("exit_rule"),
+                },
+            }
+            for r in bbk_rows
+        ],
+    })
+
+    # ── 7. ml-logreg (analyses) ───────────────────────────────────────────────
     # 註：baseline-momentum（動能對照）已於使用者要求下移除（純對照、無實用價值）。
     for skill_id, label in [
         ("ml-logreg", "ML 預測"),

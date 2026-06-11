@@ -36,11 +36,12 @@ if [ "$(date +%u)" = "6" ]; then
   docker run --rm --network stock_default -v stock_ml_models:/app/models -e DATABASE_URL="$DBURL" stock-ml train 2>&1 | tail -3
 fi
 docker run --rm --network stock_default -v stock_ml_models:/app/models -e DATABASE_URL="$DBURL" stock-ml predict 2>&1 | tail -1
-#   4c. 5-10-20 / 破支撐拉回 / 布林通道趨勢續抱 買進訊號（DB function，live + 防重；box 已退役）
+#   4c. 5-10-20 / 破支撐拉回 / 布林通道趨勢續抱 / 布林開口放量突破 買進訊號（DB function，live + 防重；box 已退役）
 docker exec stock-timescaledb psql -U stock_admin -d stockdb \
     -c "SELECT record_strategy_signals();" \
     -c "SELECT record_spring_signals();" \
-    -c "SELECT record_bb_trend_signals();"
+    -c "SELECT record_bb_trend_signals();" \
+    -c "SELECT record_bb_breakout_signals();"
 
 # 5. 每日推薦快照（所見即所記，含 VCP 醞釀中）→ daily_recommendations（供前向報酬驗證）
 docker exec stock-timescaledb psql -U stock_admin -d stockdb \
@@ -50,6 +51,7 @@ docker exec stock-timescaledb psql -U stock_admin -d stockdb \
 docker exec stock-timescaledb psql -U stock_admin -d stockdb \
     -c "SELECT scan_strategy_candidates();" \
     -c "SELECT evaluate_due_predictions();" \
-    -c "SELECT evaluate_bb_trend();"
+    -c "SELECT evaluate_bb_trend();" \
+    -c "SELECT evaluate_bb_breakout();"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') ===== 每日掃描完成 ====="
