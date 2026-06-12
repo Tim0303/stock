@@ -69,8 +69,8 @@ BEGIN
     FROM v_price_indicators WHERE n_window>=20 AND ma20 IS NOT NULL;
   CREATE INDEX ON _m(symbol, ts);
 
-  INSERT INTO prediction_outcomes (analysis_id, exit_price, realized_return, is_win, notes)
-  SELECT a.analysis_id, x.exit_price,
+  INSERT INTO prediction_outcomes (analysis_id, exit_price, exit_date, realized_return, is_win, notes)
+  SELECT a.analysis_id, x.exit_price, x.exit_date,
     round((x.exit_price/e.cl - 1) - p_cost, 5),
     ((x.exit_price/e.cl - 1) - p_cost) > 0,
     x.reason
@@ -79,9 +79,10 @@ BEGIN
   JOIN _px e ON e.symbol=a.symbol AND e.ts=a.as_of
   CROSS JOIN LATERAL (   -- 第一個「跌破20MA 或 −8%停損」的交易日；都沒有 → 無列(未平倉)
     SELECT CASE WHEN f.sl THEN round(e.cl*0.92,4) ELSE f.cl END AS exit_price,
+           f.ts AS exit_date,
            CASE WHEN f.sl THEN 'stop' ELSE 'ma20_break' END AS reason
     FROM (
-      SELECT i.cl, i.rn, (i.lo <= e.cl*0.92) AS sl
+      SELECT i.cl, i.rn, i.ts, (i.lo <= e.cl*0.92) AS sl
       FROM _px i JOIN _m m ON m.symbol=i.symbol AND m.ts=i.ts
       WHERE i.symbol=a.symbol AND i.rn>e.rn AND i.rn<=e.rn+p_scan
         AND (i.lo <= e.cl*0.92 OR i.cl < m.ma20)

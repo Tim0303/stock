@@ -5,6 +5,7 @@ import SkillsPanel from './components/SkillsPanel.jsx'
 import ChartPanel from './components/ChartPanel.jsx'
 import AnalystPicksPanel from './components/AnalystPicksPanel.jsx'
 import EodSignalsPanel from './components/EodSignalsPanel.jsx'
+import AnalystPositionsPanel from './components/AnalystPositionsPanel.jsx'
 import Header from './components/Header.jsx'
 
 const REFRESH_INTERVAL = 30 // seconds
@@ -23,6 +24,7 @@ export default function App() {
   const [analystsComputing, setAnalystsComputing] = useState(false)
   const [eodSignals, setEodSignals] = useState([])
   const [eodScanTime, setEodScanTime] = useState(null)
+  const [positions, setPositions] = useState([])
   const [market, setMarket] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -42,6 +44,7 @@ export default function App() {
       apiFetch('/api/skills'),
       apiFetch('/api/analyst-picks'),
       apiFetch('/api/eod-signals'),
+      apiFetch('/api/analyst-positions'),
     ])
 
     if (results[0].status === 'fulfilled') {
@@ -84,6 +87,12 @@ export default function App() {
       setEodScanTime(results[4].value.scan_time || null)
     } else {
       errs.eod = results[4].reason?.message
+    }
+
+    if (results[5].status === 'fulfilled') {
+      setPositions(results[5].value.data || [])
+    } else {
+      errs.positions = results[5].reason?.message
     }
 
     setErrors(errs)
@@ -142,6 +151,17 @@ export default function App() {
             error={errors.analysts}
             onSelect={setSelectedSymbol}
             market={market}
+          />
+        </div>
+
+        {/* 分析師持股追蹤（live 訊號當持股：進場/出場/現價/報酬） */}
+        <div className="mb-4 fade-in fade-in-delay-2">
+          <AnalystPositionsPanel
+            data={positions}
+            loading={loading}
+            error={errors.positions}
+            onSelect={setSelectedSymbol}
+            selectedSymbol={selectedSymbol}
           />
         </div>
 

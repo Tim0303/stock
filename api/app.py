@@ -453,6 +453,43 @@ def eod_signals(limit: int = Query(default=200, ge=1, le=500)):
     return {"scan_time": scan_time, "scan_date": scan_date, "count": len(rows), "data": rows}
 
 
+# ── /api/analyst-positions ────────────────────────────────────────────────────
+@app.get(
+    "/api/analyst-positions",
+    summary="各分析師持股追蹤（live 訊號當持股）",
+    tags=["strategy"],
+    response_description="每位分析師的 live 訊號模擬持股：進場/出場/現價/報酬，依分析師分組",
+)
+def analyst_positions():
+    """
+    讀 `v_analyst_positions`：把各分析師寫進 analyses 的 live 訊號當「模擬持股」。
+    holding=持有中(顯示現價+未實現)；closed=已平倉(顯示出場日/價+實現報酬)。
+    回傳 {count, data:[...]}（含 skill 欄，前端依分析師分組）。表不存在時回空（容錯）。
+    """
+    try:
+        conn = get_conn()
+        has_view = table_exists(conn, "v_analyst_positions")
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB error: {exc}")
+
+    if not has_view:
+        return {"count": 0, "data": [], "note": "v_analyst_positions not yet available"}
+
+    try:
+        rows = query(
+            """
+            SELECT skill, symbol, name, entry_date, exit_date,
+                   entry_price, exit_price, current_price, status, ret_pct, score, signal_type
+            FROM v_analyst_positions
+            """
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {"count": len(rows), "data": rows}
+
+
 # ── /api/symbols ──────────────────────────────────────────────────────────────
 @app.get(
     "/api/symbols",

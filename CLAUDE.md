@@ -17,7 +17,8 @@ intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤�
 > **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs / 08_indicators /
 > 09_chips / 10_strategy_5_10_20 / 11_scan_evolve / 12_backtest / 13_adjust(還原權值) / 14_strategy_box /
 > 15_vcp_watchlist / 16_daily_recommendations / 17_support_reclaim(spring) / 18_market_regime / 19_bracket_scoring /
-> 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照) / 22_bb_breakout(布林開口放量突破)。
+> 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照) / 22_bb_breakout(布林開口放量突破) /
+> 23_position_tracker(分析師持股追蹤：prediction_outcomes 加 exit_date + v_analyst_positions，供 /api/analyst-positions)。
 >
 > **分析師現況（共用 `analyses`、同台比較）**：儀表板 6 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
 > `strat-bb-trend`(布林通道趨勢續抱) / `strat-bb-breakout`(布林開口放量突破) / `ml-logreg`。

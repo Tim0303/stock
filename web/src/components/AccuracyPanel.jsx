@@ -73,7 +73,7 @@ function AccuracyCard({ skill, n_evaluated, win_rate, avg_return, profit_factor 
             label="平均報酬"
             value={avg_return !== null ? (avg_return * 100).toFixed(2) : null}
             unit="%"
-            color={avg_return >= 0 ? '#00ff88' : '#ff3366'}
+            color={avg_return >= 0 ? '#ff5b6e' : '#2dd47e'}
             highlight={true}
           />
           <StatLine

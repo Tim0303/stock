@@ -34,10 +34,11 @@ BEGIN
   CREATE INDEX ON _px(symbol, rn);
   CREATE INDEX ON _px(symbol, ts);
 
-  INSERT INTO prediction_outcomes (analysis_id, exit_price, realized_return, is_win, notes)
+  INSERT INTO prediction_outcomes (analysis_id, exit_price, exit_date, realized_return, is_win, notes)
   SELECT
     a.analysis_id,
     x.exit_price,
+    x.exit_date,
     round((x.exit_price / e.cl - 1) - p_cost, 5)                     AS realized_return,
     ((x.exit_price / e.cl - 1) - p_cost) > 0                         AS is_win,
     x.reason
@@ -47,21 +48,21 @@ BEGIN
   JOIN v_trade_targets t ON t.symbol = a.symbol AND t.ts = a.as_of
   CROSS JOIN LATERAL (
     WITH fwd AS (
-      SELECT i.rn, i.cl, (i.lo <= t.stop_price) AS sl, (i.hi >= t.target_price) AS tp
+      SELECT i.rn, i.ts, i.cl, (i.lo <= t.stop_price) AS sl, (i.hi >= t.target_price) AS tp
       FROM _px i WHERE i.symbol = a.symbol AND i.rn > e.rn AND i.rn <= e.rn + p_maxhold
     ),
     first_hit AS (   -- 先到先出（同日先判停損，保守）
-      SELECT CASE WHEN sl THEN t.stop_price ELSE t.target_price END AS exit_price,
+      SELECT CASE WHEN sl THEN t.stop_price ELSE t.target_price END AS exit_price, ts AS exit_date,
              CASE WHEN sl THEN 'stop' ELSE 'target' END             AS reason
       FROM fwd WHERE sl OR tp ORDER BY rn LIMIT 1
     ),
     matured AS (     -- 沒觸發但 maxhold 已過 → 到期收盤；資料未滿則無列（留待下次）
-      SELECT cl AS exit_price, 'timeout' AS reason
+      SELECT cl AS exit_price, ts AS exit_date, 'timeout' AS reason
       FROM _px WHERE symbol = a.symbol AND rn = e.rn + p_maxhold
     )
-    SELECT exit_price, reason FROM first_hit
+    SELECT exit_price, exit_date, reason FROM first_hit
     UNION ALL
-    SELECT exit_price, reason FROM matured WHERE NOT EXISTS (SELECT 1 FROM first_hit)
+    SELECT exit_price, exit_date, reason FROM matured WHERE NOT EXISTS (SELECT 1 FROM first_hit)
     LIMIT 1
   ) x
   WHERE o.analysis_id IS NULL

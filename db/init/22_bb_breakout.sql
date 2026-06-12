@@ -90,15 +90,15 @@ BEGIN
     SELECT symbol, ts, ma20 FROM v_price_indicators WHERE n_window>=20 AND ma20 IS NOT NULL;
   CREATE INDEX ON _m(symbol, ts);
 
-  INSERT INTO prediction_outcomes (analysis_id, exit_price, realized_return, is_win, notes)
-  SELECT a.analysis_id, x.exit_price,
+  INSERT INTO prediction_outcomes (analysis_id, exit_price, exit_date, realized_return, is_win, notes)
+  SELECT a.analysis_id, x.exit_price, x.exit_date,
     round((x.exit_price/e.cl - 1) - p_cost, 5),
     ((x.exit_price/e.cl - 1) - p_cost) > 0, 'ma20_break'
   FROM analyses a
   LEFT JOIN prediction_outcomes o ON o.analysis_id=a.analysis_id
   JOIN _px e ON e.symbol=a.symbol AND e.ts=a.as_of
   CROSS JOIN LATERAL (   -- 第一個收盤跌破20MA 的交易日；沒有 → 無列(未平倉，留待下次)
-    SELECT i.cl AS exit_price
+    SELECT i.cl AS exit_price, i.ts AS exit_date
     FROM _px i JOIN _m m ON m.symbol=i.symbol AND m.ts=i.ts
     WHERE i.symbol=a.symbol AND i.rn>e.rn AND i.rn<=e.rn+p_scan AND i.cl < m.ma20
     ORDER BY i.rn LIMIT 1
@@ -120,8 +120,8 @@ BEGIN
     FROM daily_prices WHERE close > 0;
   CREATE INDEX ON _px(symbol, rn); CREATE INDEX ON _px(symbol, ts);
 
-  INSERT INTO prediction_outcomes (analysis_id, exit_price, realized_return, is_win, notes)
-  SELECT a.analysis_id, x.exit_price,
+  INSERT INTO prediction_outcomes (analysis_id, exit_price, exit_date, realized_return, is_win, notes)
+  SELECT a.analysis_id, x.exit_price, x.exit_date,
     round((x.exit_price / e.cl - 1) - p_cost, 5),
     ((x.exit_price / e.cl - 1) - p_cost) > 0, x.reason
   FROM analyses a
@@ -130,20 +130,20 @@ BEGIN
   JOIN v_trade_targets t ON t.symbol = a.symbol AND t.ts = a.as_of
   CROSS JOIN LATERAL (
     WITH fwd AS (
-      SELECT i.rn, i.cl, (i.lo <= t.stop_price) AS sl, (i.hi >= t.target_price) AS tp
+      SELECT i.rn, i.ts, i.cl, (i.lo <= t.stop_price) AS sl, (i.hi >= t.target_price) AS tp
       FROM _px i WHERE i.symbol = a.symbol AND i.rn > e.rn AND i.rn <= e.rn + p_maxhold
     ),
     first_hit AS (
-      SELECT CASE WHEN sl THEN t.stop_price ELSE t.target_price END AS exit_price,
+      SELECT CASE WHEN sl THEN t.stop_price ELSE t.target_price END AS exit_price, ts AS exit_date,
              CASE WHEN sl THEN 'stop' ELSE 'target' END             AS reason
       FROM fwd WHERE sl OR tp ORDER BY rn LIMIT 1
     ),
     matured AS (
-      SELECT cl AS exit_price, 'timeout' AS reason
+      SELECT cl AS exit_price, ts AS exit_date, 'timeout' AS reason
       FROM _px WHERE symbol = a.symbol AND rn = e.rn + p_maxhold
     )
-    SELECT exit_price, reason FROM first_hit
-    UNION ALL SELECT exit_price, reason FROM matured WHERE NOT EXISTS (SELECT 1 FROM first_hit)
+    SELECT exit_price, exit_date, reason FROM first_hit
+    UNION ALL SELECT exit_price, exit_date, reason FROM matured WHERE NOT EXISTS (SELECT 1 FROM first_hit)
     LIMIT 1
   ) x
   WHERE o.analysis_id IS NULL

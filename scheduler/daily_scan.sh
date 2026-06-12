@@ -54,4 +54,8 @@ docker exec stock-timescaledb psql -U stock_admin -d stockdb \
     -c "SELECT evaluate_bb_trend();" \
     -c "SELECT evaluate_bb_breakout();"
 
+# 8. 分析師持股追蹤刷新（從策略訊號 view 推導 2025-12 起持股；隔日開盤進場/各自出場/現價）
+docker exec stock-timescaledb psql -U stock_admin -d stockdb \
+    -c "SELECT refresh_analyst_positions();"
+
 echo "$(date '+%Y-%m-%d %H:%M:%S') ===== 每日掃描完成 ====="
