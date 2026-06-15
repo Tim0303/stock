@@ -8,17 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **服務（`docker-compose.yml`）**：常駐 `timescaledb`/`mcp`/`api`/`web`/`scheduler`；profile=tools 一次性容器
 > `loader`/`chiploader`/`ml`/`vcp`。port：7001 MCP / 7002 DB / 7003 API / 7004 戰情儀表板。
 > `scheduler` 容器掛 docker socket、crond 兩班：**13:10 TPE `scheduler/intraday_scan.sh`（尾盤即時掃描）** + 15:00 TPE `scheduler/daily_scan.sh`。
-daily_scan：行情增量→還原→**籌碼增量(三大法人 T86 / 融資融券 MI_MARGN，走 TWSE 依日期端點 chiploader --twse-inst/--twse-margin --days 3，免額度)**→各分析師記錄→快照→評分。
+daily_scan：行情增量→還原→**籌碼增量(三大法人 T86 / 融資融券 MI_MARGN，走 TWSE 依日期端點 chiploader --twse-inst/--twse-margin --days 3，免額度)**→各分析師記錄→快照→評分→**`refresh_analyst_positions()`(刷新持股追蹤)**。
 intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤寫 daily_prices，量張→股×1000)→`vcp watchlist`→`snapshot_eod_signals()`(凍結 5-10-20/spring/bb-trend/vcp 候選到 `eod_intraday_signals`，**純預覽不寫 analyses**)→（有設 `DISCORD_WEBHOOK_URL` 則 curl 推 Discord）。儀表板「尾盤即時訊號」區塊讀 `/api/eod-signals`。
+> **分析師持股追蹤**（`24_analyst_positions.sql`）：把各價量分析師訊號當「模擬持股」——`refresh_analyst_positions(p_since 預設2025-12)` **從策略訊號 view 直接推導**(與 analyses 的 backtest/去重解耦)物化到 `analyst_positions` 表：**進場=訊號日隔日開盤**、出場 5-10-20/spring 走 bracket・bb-trend/bb-breakout 走跌破20MA、同檔同策略5日冷卻去重。`v_analyst_positions`(供 `/api/analyst-positions` + 儀表板「分析師持股追蹤」面板)：持有/待進場全顯示、**已平倉只留當月或平倉後7日**。報酬一律台股**紅漲綠跌**(正紅負綠)。ml-logreg/strat-vcp 為模型/Python，暫不納入此追蹤。
 >
-> **行情來源 = FinMind**（非 yfinance；台股日線/名稱/產業/籌碼皆走 FinMind）。**universe ≈ 300 檔×10Y** 真實日線。
+> **行情來源 = FinMind**（非 yfinance；台股日線/中文名/產業/除權息還原走 FinMind，需 `FINMIND_TOKEN`）。**籌碼與盤中改走 TWSE 公開端點（MI_MARGN/T86/MIS，免 token）**——FinMind token 現在只剩 `loader` 抓行情/還原時用到。**universe ≈ 300 檔×10Y** 真實日線。
 > **還原權值 = 前復權**：`daily_prices.adj_factor`，**最新一筆=1.0、歷史<1.0**（現價=實際成交價）；指標/策略/評分一律用 `price*adj_factor`。
 >
 > **db/init 實際編號**：01_extensions / 02_roles / 03_core / 05_learning / 06_grants / 07_jobs / 08_indicators /
 > 09_chips / 10_strategy_5_10_20 / 11_scan_evolve / 12_backtest / 13_adjust(還原權值) / 14_strategy_box /
 > 15_vcp_watchlist / 16_daily_recommendations / 17_support_reclaim(spring) / 18_market_regime / 19_bracket_scoring /
 > 20_bb_trend(布林通道趨勢續抱) / 21_eod_intraday_signals(尾盤即時訊號快照) / 22_bb_breakout(布林開口放量突破) /
-> 23_position_tracker(分析師持股追蹤：prediction_outcomes 加 exit_date + v_analyst_positions，供 /api/analyst-positions)。
+> 23_position_tracker(prediction_outcomes 加 exit_date 出場交易日 + 評分函式 19/20/22 記錄之) /
+> 24_analyst_positions(分析師持股追蹤：analyst_positions 表 + refresh_analyst_positions() + v_analyst_positions，供 /api/analyst-positions)。
 >
 > **分析師現況（共用 `analyses`、同台比較）**：儀表板 6 位＝`strat-vcp` / `strat-5-10-20` / `strat-spring`(破支撐拉回) /
 > `strat-bb-trend`(布林通道趨勢續抱) / `strat-bb-breakout`(布林開口放量突破) / `ml-logreg`。

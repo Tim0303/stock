@@ -24,48 +24,65 @@ CREATE TABLE IF NOT EXISTS daily_candidates (
 CREATE INDEX IF NOT EXISTS idx_daily_candidates_scan_rank
   ON daily_candidates (scan_date, rank);
 
--- ── 2) 掃描：寫入當日近期 buy/watch 候選 ─────────────────────────────
--- 來源 v_strategy_latest（每檔最新一日）。過濾：ts >= max(ts)-5d（濾殭屍股）
--- 且 rating in('buy','watch')。依 score desc 排 rank。
--- scan_date 用該檔自身的 ts；market 由 symbols join；snapshot_params_hash 取 champion param_hash。
+-- 綜合排行榜欄位：skill=該檔最高分的分析師、n_skills=共幾位分析師看好
+ALTER TABLE daily_candidates ADD COLUMN IF NOT EXISTS skill    text;
+ALTER TABLE daily_candidates ADD COLUMN IF NOT EXISTS n_skills int;
+
+-- ── 2) 掃描：6 位分析師「綜合排行榜」寫入 daily_candidates ─────────────────
+-- UNION 6 位分析師的當前買進級推薦（5-10-20/spring/bb-trend/bb-breakout 走各自 latest view、
+--   vcp 走 watchlist 剛突破、ml-logreg 走 analyses live predicted=up），各檔過濾近5日(濾殭屍)。
+-- 每檔去重取「最高分的分析師」並計 n_skills(幾位看好)；排名依 n_skills desc → score desc（共識優先）。
+-- scan_date 一律用最新交易日，PK(scan_date,symbol) 確保一檔一列。
 CREATE OR REPLACE FUNCTION scan_strategy_candidates()
 RETURNS INT
 LANGUAGE plpgsql
 AS $$
 DECLARE
   n INT;
-  v_champ_hash text;
+  v_d date;
 BEGIN
-  SELECT param_hash INTO v_champ_hash
-  FROM skills
-  WHERE family = 'strat-5-10-20' AND status = 'champion'
-  ORDER BY version DESC LIMIT 1;
+  v_d := (SELECT max(ts) FROM daily_prices);
+  DELETE FROM daily_candidates WHERE scan_date = v_d;   -- 當日重算，去除已不再入選者
 
-  WITH recent AS (
-    SELECT
-      l.symbol, l.ts, l.skill_id, l.score, l.rating, l.signal_type,
-      s.market,
-      row_number() OVER (ORDER BY l.score DESC, l.symbol) AS rnk
-    FROM v_strategy_latest l
-    LEFT JOIN symbols s ON s.symbol = l.symbol
-    WHERE l.rating IN ('buy', 'watch')
-      -- 濾下市/停止交易殭屍股：只收最新資料近 5 日內者
-      AND l.ts >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+  WITH picks AS (
+    SELECT 'strat-5-10-20'::text skill, 1::bigint skill_id, l.symbol, l.score::numeric AS score, l.signal_type::text AS signal_type
+    FROM v_strategy_latest l WHERE l.rating='buy' AND l.ts >= v_d - 5
+    UNION ALL
+    SELECT 'strat-spring', 10, s.symbol, s.score, s.signal_type
+    FROM v_support_reclaim_latest s WHERE s.signal_type='spring' AND s.ts >= v_d - 5
+    UNION ALL
+    SELECT 'strat-bb-trend', 15, b.symbol, b.score, b.signal_type
+    FROM v_bb_trend_latest b WHERE b.ts >= v_d - 5
+    UNION ALL
+    SELECT 'strat-bb-breakout', 20, bk.symbol, bk.score, bk.signal_type
+    FROM v_bb_breakout_latest bk WHERE bk.ts >= v_d - 5
+    UNION ALL
+    SELECT 'strat-vcp', 8, w.symbol, w.score, w.status
+    FROM vcp_watchlist w
+    WHERE w.scan_date = (SELECT max(scan_date) FROM vcp_watchlist) AND w.status LIKE '剛突破%'
+    UNION ALL
+    SELECT 'ml-logreg', NULL::bigint, a.symbol, a.score, a.signal_type
+    FROM analyses a
+    WHERE a.skill='ml-logreg' AND (a.meta->>'backtest') IS DISTINCT FROM 'true' AND a.predicted='up'
+      AND a.as_of = (SELECT max(as_of) FROM analyses
+                     WHERE skill='ml-logreg' AND (meta->>'backtest') IS DISTINCT FROM 'true')
+  ),
+  best AS (   -- 每檔取最高分的分析師 + 計 n_skills(幾位看好)
+    SELECT DISTINCT ON (symbol)
+      symbol, skill, skill_id, score, signal_type,
+      count(*) OVER (PARTITION BY symbol) AS n_skills
+    FROM picks
+    ORDER BY symbol, score DESC NULLS LAST
+  ),
+  final AS (
+    SELECT b.*, sy.market,
+      row_number() OVER (ORDER BY b.n_skills DESC, b.score DESC NULLS LAST, b.symbol) AS rank
+    FROM best b LEFT JOIN symbols sy ON sy.symbol = b.symbol
   )
   INSERT INTO daily_candidates
-    (scan_date, market, symbol, skill_id, score, rating, signal_type, rank, snapshot_params_hash)
-  SELECT
-    r.ts, r.market, r.symbol, r.skill_id, r.score, r.rating, r.signal_type, r.rnk, v_champ_hash
-  FROM recent r
-  ON CONFLICT (scan_date, symbol) DO UPDATE SET
-    market               = EXCLUDED.market,
-    skill_id             = EXCLUDED.skill_id,
-    score                = EXCLUDED.score,
-    rating               = EXCLUDED.rating,
-    signal_type          = EXCLUDED.signal_type,
-    rank                 = EXCLUDED.rank,
-    snapshot_params_hash = EXCLUDED.snapshot_params_hash,
-    created_at           = now();
+    (scan_date, market, symbol, skill, skill_id, score, rating, signal_type, rank, n_skills)
+  SELECT v_d, f.market, f.symbol, f.skill, f.skill_id, f.score, 'buy', f.signal_type, f.rank, f.n_skills
+  FROM final f;
 
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;

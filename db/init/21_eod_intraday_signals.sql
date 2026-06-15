@@ -56,6 +56,13 @@ BEGIN
   FROM v_bb_trend_latest b JOIN symbols sy USING (symbol)
   WHERE b.ts = v_d
   UNION ALL
+  -- 布林開口放量突破（出場單一標準=跌破20MA，無壓力目標；以暫定今日盤算訊號）
+  SELECT v_t, v_d, 'strat-bb-breakout', bk.symbol, sy.name, bk.score, 'breakout', bk.close, bk.close,
+         NULL, bk.ma20,
+         jsonb_build_object('vol_ratio', bk.vol_ratio, 'bw_ratio', bk.bw_ratio, 'exit_rule', '跌破20MA')
+  FROM v_bb_breakout bk JOIN symbols sy USING (symbol)
+  WHERE bk.is_signal AND bk.ts = v_d
+  UNION ALL
   -- VCP 剛突破（vcp_watchlist 最新一批；尾盤前先跑 vcp watchlist 以暫定盤刷新）
   SELECT v_t, v_d, 'strat-vcp', w.symbol, w.name, w.score, w.status, w.close, w.close,
          NULL, NULL,

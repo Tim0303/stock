@@ -1,13 +1,14 @@
-import React from 'react'
+import React, { useState } from 'react'
 
-// 四位價量型分析師主題（與 AnalystPicksPanel 一致）
+// 價量型分析師主題（與 AnalystPicksPanel 一致）
 const SKILL_META = {
   'strat-5-10-20': { label: '5-10-20 順勢', accent: '#00d4ff' },
   'strat-spring': { label: '破支撐拉回', accent: '#ffb800' },
   'strat-bb-trend': { label: '布林趨勢續抱', accent: '#818cf8' },
+  'strat-bb-breakout': { label: '布林開口放量突破', accent: '#f59e0b' },
   'strat-vcp': { label: 'VCP 突破', accent: '#00ff88' },
 }
-const SKILL_ORDER = ['strat-5-10-20', 'strat-spring', 'strat-bb-trend', 'strat-vcp']
+const SKILL_ORDER = ['strat-5-10-20', 'strat-spring', 'strat-bb-trend', 'strat-bb-breakout', 'strat-vcp']
 
 function fmt(n, d = 2) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return '—'
@@ -83,13 +84,20 @@ function SkillCard({ skill, rows, onSelect, selectedSymbol }) {
   )
 }
 
-export default function EodSignalsPanel({ data = [], scanTime, loading, error, onSelect, selectedSymbol }) {
+export default function EodSignalsPanel({ data = [], scanTime, loading, error, onSelect, selectedSymbol, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false)
   const bySkill = SKILL_ORDER.reduce((acc, s) => { acc[s] = []; return acc }, {})
   for (const row of data) {
     if (!bySkill[row.skill]) bySkill[row.skill] = []
     bySkill[row.skill].push(row)
   }
   const tLabel = scanTimeLabel(scanTime)
+
+  const handleRefresh = async () => {
+    if (!onRefresh || refreshing) return
+    setRefreshing(true)
+    try { await onRefresh() } finally { setRefreshing(false) }
+  }
 
   return (
     <div className="panel rounded-sm" style={{ minHeight: '160px' }}>
@@ -105,6 +113,22 @@ export default function EodSignalsPanel({ data = [], scanTime, loading, error, o
                 : `${data.length} 檔候選`}
           </span>
           <span className="mono text-xs ml-auto" style={{ color: '#2a3a5a' }}>盤中即時報價試算 · 預覽不記錄</span>
+          {onRefresh && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="mono text-xs px-2.5 py-1 rounded-sm"
+              title="重新抓即時報價並重算尾盤訊號"
+              style={{
+                border: '1px solid #ff6ec766', color: refreshing ? '#4a6080' : '#ff6ec7',
+                background: refreshing ? 'rgba(0,0,0,0.25)' : 'rgba(255,110,199,0.10)',
+                cursor: refreshing ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                fontFamily: 'Noto Sans TC',
+              }}
+            >
+              {refreshing ? '更新中…' : '↻ 重新整理'}
+            </button>
+          )}
         </div>
 
         {error && (
@@ -119,7 +143,7 @@ export default function EodSignalsPanel({ data = [], scanTime, loading, error, o
             <div className="text-xs" style={{ color: '#2a3a5a', fontFamily: 'Noto Sans TC' }}>今日尚未掃描（每日 13:10 盤中觸發）</div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             {SKILL_ORDER.map((skill) => (
               <SkillCard key={skill} skill={skill} rows={bySkill[skill] || []} onSelect={onSelect} selectedSymbol={selectedSymbol} />
             ))}

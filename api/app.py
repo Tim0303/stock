@@ -8,14 +8,19 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any
 
 import psycopg2
 import psycopg2.extras
+import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+# 可寫連線（僅供尾盤即時訊號手動重整端點）；未設則該端點回 503
+WRITE_DATABASE_URL = os.environ.get("WRITE_DATABASE_URL")
+MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
 # analyst-picks 涉及昂貴的策略 view（v_strategy_latest/box 是全歷史 DISTINCT ON 掃描，
 # 單查可達數十秒甚至數分鐘，會把 DB CPU 打到 100%）。因此：
@@ -31,6 +36,86 @@ _ANALYST_LOCK = threading.Lock()
 # ── DB 連線工廠（每請求短連線，無需 pool；唯讀負載低）──────────────────────
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
+
+
+# ── 尾盤即時訊號「手動重整」：抓 MIS 即時報價→今日暫定盤→snapshot（需可寫連線）─────────
+def _mis_num(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _mis_price(s):
+    """現價優先序：z 成交價 → pz 上一筆 → 買賣中點 → 高低中點。"""
+    for k in ("z", "pz"):
+        v = _mis_num(s.get(k))
+        if v:
+            return v
+    bv = _mis_num((s.get("b") or "").split("_")[0])
+    av = _mis_num((s.get("a") or "").split("_")[0])
+    if bv and av:
+        return round((bv + av) / 2, 4)
+    if bv or av:
+        return bv or av
+    h, l = _mis_num(s.get("h")), _mis_num(s.get("l"))
+    if h and l:
+        return round((h + l) / 2, 4)
+    return None
+
+
+def _mis_batch(ex_chs):
+    try:
+        r = requests.get(MIS_URL, params={"ex_ch": "|".join(ex_chs), "json": "1", "delay": "0",
+                                          "_": str(int(time.time() * 1000))},
+                         headers={"User-Agent": "Mozilla/5.0",
+                                  "Referer": "https://mis.twse.com.tw/stock/index.jsp"}, timeout=20)
+        b = r.json()
+    except Exception:
+        return []
+    return (b.get("msgArray") or []) if b.get("rtcode") == "0000" else []
+
+
+def _refresh_intraday():
+    """抓 MIS 即時報價 → 今日暫定 OHLCV upsert daily_prices → snapshot_eod_signals()。回傳 (n_prices, n_signals)。"""
+    if not WRITE_DATABASE_URL:
+        raise HTTPException(status_code=503, detail="manual refresh not configured (no WRITE_DATABASE_URL)")
+    conn = psycopg2.connect(WRITE_DATABASE_URL)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol FROM symbols WHERE market='TW'")
+        syms = {r[0] for r in cur.fetchall()}
+        chans = [("otc_" if s.endswith(".TWO") else "tse_") + s.split(".")[0] + ".tw" for s in syms]
+        today = date.today()
+        rows = []
+        for i in range(0, len(chans), 50):
+            for s in _mis_batch(chans[i:i + 50]):
+                code = (s.get("c") or "").strip()
+                sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
+                if sym not in syms:
+                    continue
+                px = _mis_price(s)
+                if px is None:
+                    continue
+                o, h, l = _mis_num(s.get("o")), _mis_num(s.get("h")), _mis_num(s.get("l"))
+                vol = _mis_num(s.get("v"))
+                rows.append((sym, today, o, h or px, l or px, px,
+                             int(vol * 1000) if vol else None, 1.0))
+        if rows:
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
+                VALUES %s
+                ON CONFLICT (symbol, ts) DO UPDATE SET
+                    open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+                    close=EXCLUDED.close, volume=EXCLUDED.volume
+            """, rows)
+        cur.execute("SELECT snapshot_eod_signals()")
+        n_sig = cur.fetchone()[0]
+        conn.commit()
+        return len(rows), n_sig
+    finally:
+        conn.close()
 
 
 def query(sql: str, params=None) -> list[dict]:
@@ -118,12 +203,14 @@ def candidates(
                 dc.rating,
                 dc.signal_type,
                 dc.rank,
-                dc.skill_id
+                dc.skill_id,
+                dc.skill,
+                dc.n_skills
             FROM daily_candidates dc
             LEFT JOIN symbols sym USING (symbol)
-            WHERE dc.scan_date >= (SELECT max(ts) FROM daily_prices) - INTERVAL '5 days'
+            WHERE dc.scan_date = (SELECT max(scan_date) FROM daily_candidates)
               {market_filter}
-            ORDER BY dc.score DESC
+            ORDER BY dc.rank
             LIMIT %(limit)s
         """
         params: dict[str, Any] = {"limit": limit}
@@ -451,6 +538,44 @@ def eod_signals(limit: int = Query(default=200, ge=1, le=500)):
     scan_time = rows[0]["scan_time"].isoformat() if rows else None
     scan_date = rows[0]["scan_date"] if rows else None
     return {"scan_time": scan_time, "scan_date": scan_date, "count": len(rows), "data": rows}
+
+
+# ── /api/eod-signals/refresh （手動觸發：抓即時報價→暫定盤→重算尾盤訊號）────────────
+@app.post(
+    "/api/eod-signals/refresh",
+    summary="手動重整尾盤即時訊號（抓 MIS 即時報價並重算）",
+    tags=["strategy"],
+    response_description="重抓即時報價、寫今日暫定盤、重跑 snapshot_eod_signals 後回傳新快照",
+)
+def eod_signals_refresh():
+    """
+    盤中手動觸發一次尾盤即時掃描：TWSE MIS 即時報價→今日暫定收盤→`snapshot_eod_signals()`。
+    需 `WRITE_DATABASE_URL`（可寫連線）；未設回 503。VCP 仍沿用最近一次 watchlist（不在此重算）。
+    """
+    try:
+        n_px, n_sig = _refresh_intraday()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"refresh failed: {exc}")
+
+    try:
+        rows = query(
+            """
+            SELECT skill, symbol, name, score, signal_type,
+                   close, entry_price, target_price, stop_price, meta, scan_time, scan_date
+            FROM eod_intraday_signals
+            WHERE scan_time = (SELECT max(scan_time) FROM eod_intraday_signals)
+            ORDER BY skill, score DESC NULLS LAST
+            """
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    scan_time = rows[0]["scan_time"].isoformat() if rows else None
+    scan_date = rows[0]["scan_date"] if rows else None
+    return {"refreshed": True, "prices": n_px, "count": len(rows),
+            "scan_time": scan_time, "scan_date": scan_date, "data": rows}
 
 
 # ── /api/analyst-positions ────────────────────────────────────────────────────

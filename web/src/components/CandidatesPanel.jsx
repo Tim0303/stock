@@ -1,5 +1,25 @@
 import React from 'react'
 
+// 分析師標籤（與其他面板一致）
+const SKILL_META = {
+  'strat-vcp': { label: 'VCP突破', color: '#00ff88' },
+  'strat-5-10-20': { label: '5-10-20', color: '#00d4ff' },
+  'strat-spring': { label: '破支撐拉回', color: '#2dd4bf' },
+  'strat-bb-trend': { label: '布林趨勢續抱', color: '#818cf8' },
+  'strat-bb-breakout': { label: '布林開口突破', color: '#f59e0b' },
+  'ml-logreg': { label: 'ML預測', color: '#ff6ec7' },
+}
+
+function SkillCell({ skill }) {
+  const m = SKILL_META[skill] || { label: skill || '—', color: '#8ba3c7' }
+  return (
+    <span className="mono text-xs px-1.5 py-0.5 rounded-sm" style={{
+      background: `${m.color}14`, border: `1px solid ${m.color}55`, color: m.color,
+      fontFamily: 'Noto Sans TC', whiteSpace: 'nowrap',
+    }}>{m.label}</span>
+  )
+}
+
 function RatingBadge({ rating }) {
   const map = {
     buy: 'badge-buy',
@@ -41,21 +61,27 @@ function SignalBadge({ signalType }) {
     B: { bg: 'rgba(123,94,167,0.15)', border: 'rgba(123,94,167,0.5)', color: '#b38fd4' },
     C: { bg: 'rgba(255,215,0,0.12)', border: 'rgba(255,215,0,0.4)', color: '#ffd700' },
   }
-  const style = colors[signalType] || colors.A
+  // 進場訊號中文化：A/B/C 為 5-10-20 進場型態；其餘走策略專屬訊號
+  const labels = {
+    A: '突破A', B: '回測B', C: '站回C',
+    breakout: '開口突破', spring: '破支撐拉回', ml: 'ML看多',
+  }
+  const style = colors[signalType] || { bg: 'rgba(139,163,199,0.12)', border: 'rgba(139,163,199,0.4)', color: '#8ba3c7' }
   return (
-    <span className="mono text-xs px-2 py-0.5 rounded-sm" style={{ background: style.bg, border: `1px solid ${style.border}`, color: style.color }}>
-      訊號{signalType}
+    <span className="mono text-xs px-2 py-0.5 rounded-sm" style={{ background: style.bg, border: `1px solid ${style.border}`, color: style.color, fontFamily: 'Noto Sans TC', whiteSpace: 'nowrap' }}>
+      {labels[signalType] || signalType}
     </span>
   )
 }
 
 export default function CandidatesPanel({ data, loading, error, selectedSymbol, onSelect }) {
   return (
-    <div className="panel rounded-sm" style={{ minHeight: '280px' }}>
-      <div className="p-4">
+    <div className="panel rounded-sm h-full flex flex-col" style={{ minHeight: '280px' }}>
+      <div className="p-4 flex-1 flex flex-col min-h-0">
         <div className="section-header text-sm mb-4">
           <span style={{ color: '#00d4ff' }}>◆</span>
-          今日候選榜
+          綜合排行榜
+          <span className="text-xs" style={{ color: '#4a6080', fontFamily: 'Noto Sans TC' }}>6 位分析師</span>
           <span className="mono text-xs" style={{ color: '#4a6080' }}>
             {loading ? 'LOADING...' : `${data.length} 檔`}
           </span>
@@ -84,9 +110,9 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>RANK</th>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>名稱</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>類別</th>
+                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分析師</th>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分數</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>評級</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>推薦數</th>
                   <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>訊號</th>
                 </tr>
               </thead>
@@ -114,13 +140,15 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
                         <span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.85rem' }}>{row.name || '—'}</span>
                       </td>
                       <td className="py-2.5 px-2">
-                        <span className="mono text-xs" style={{ color: '#2a3a5a', fontSize: '0.7rem' }}>{row.industry_category || '—'}</span>
+                        <SkillCell skill={row.skill} />
                       </td>
                       <td className="py-2.5 px-2" style={{ minWidth: '100px' }}>
                         <ScoreBar score={row.score} />
                       </td>
-                      <td className="py-2.5 px-2">
-                        <RatingBadge rating={row.rating} />
+                      <td className="py-2.5 px-2 text-center">
+                        <span className="mono text-sm font-bold" style={{ color: Number(row.n_skills) >= 2 ? '#ffd700' : '#8ba3c7' }}>
+                          {row.n_skills || 1}{Number(row.n_skills) >= 2 ? '★' : ''}
+                        </span>
                       </td>
                       <td className="py-2.5 px-2">
                         <SignalBadge signalType={row.signal_type} />

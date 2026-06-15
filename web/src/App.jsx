@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import CandidatesPanel from './components/CandidatesPanel.jsx'
-import AccuracyPanel from './components/AccuracyPanel.jsx'
-import SkillsPanel from './components/SkillsPanel.jsx'
 import ChartPanel from './components/ChartPanel.jsx'
 import AnalystPicksPanel from './components/AnalystPicksPanel.jsx'
 import EodSignalsPanel from './components/EodSignalsPanel.jsx'
@@ -18,8 +16,6 @@ async function apiFetch(path) {
 
 export default function App() {
   const [candidates, setCandidates] = useState([])
-  const [accuracy, setAccuracy] = useState([])
-  const [skills, setSkills] = useState([])
   const [analysts, setAnalysts] = useState([])
   const [analystsComputing, setAnalystsComputing] = useState(false)
   const [eodSignals, setEodSignals] = useState([])
@@ -40,8 +36,6 @@ export default function App() {
 
     const results = await Promise.allSettled([
       apiFetch('/api/candidates?market=TW&limit=20'),
-      apiFetch('/api/accuracy'),
-      apiFetch('/api/skills'),
       apiFetch('/api/analyst-picks'),
       apiFetch('/api/eod-signals'),
       apiFetch('/api/analyst-positions'),
@@ -58,19 +52,7 @@ export default function App() {
     }
 
     if (results[1].status === 'fulfilled') {
-      setAccuracy(results[1].value.data || [])
-    } else {
-      errs.accuracy = results[1].reason?.message
-    }
-
-    if (results[2].status === 'fulfilled') {
-      setSkills(results[2].value.data || [])
-    } else {
-      errs.skills = results[2].reason?.message
-    }
-
-    if (results[3].status === 'fulfilled') {
-      const v = results[3].value
+      const v = results[1].value
       const picks = v.analysts || []
       setAnalystsComputing(!!v.computing)
       if (v.market) setMarket(v.market)
@@ -79,20 +61,20 @@ export default function App() {
         setAnalysts(picks)
       }
     } else {
-      errs.analysts = results[3].reason?.message
+      errs.analysts = results[1].reason?.message
     }
 
-    if (results[4].status === 'fulfilled') {
-      setEodSignals(results[4].value.data || [])
-      setEodScanTime(results[4].value.scan_time || null)
+    if (results[2].status === 'fulfilled') {
+      setEodSignals(results[2].value.data || [])
+      setEodScanTime(results[2].value.scan_time || null)
     } else {
-      errs.eod = results[4].reason?.message
+      errs.eod = results[2].reason?.message
     }
 
-    if (results[5].status === 'fulfilled') {
-      setPositions(results[5].value.data || [])
+    if (results[3].status === 'fulfilled') {
+      setPositions(results[3].value.data || [])
     } else {
-      errs.positions = results[5].reason?.message
+      errs.positions = results[3].reason?.message
     }
 
     setErrors(errs)
@@ -100,6 +82,16 @@ export default function App() {
     setLoading(false)
     setCountdown(REFRESH_INTERVAL)
   }, [selectedSymbol])
+
+  // 尾盤即時訊號手動觸發：抓即時報價+重算 snapshot，再重載資料
+  const refreshEodSignals = useCallback(async () => {
+    try {
+      const res = await fetch('/api/eod-signals/refresh', { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } finally {
+      await fetchAll()
+    }
+  }, [fetchAll])
 
   useEffect(() => {
     fetchAll()
@@ -139,6 +131,7 @@ export default function App() {
             error={errors.eod}
             onSelect={setSelectedSymbol}
             selectedSymbol={selectedSymbol}
+            onRefresh={refreshEodSignals}
           />
         </div>
 
@@ -154,23 +147,12 @@ export default function App() {
           />
         </div>
 
-        {/* 分析師持股追蹤（live 訊號當持股：進場/出場/現價/報酬） */}
-        <div className="mb-4 fade-in fade-in-delay-2">
-          <AnalystPositionsPanel
-            data={positions}
-            loading={loading}
-            error={errors.positions}
-            onSelect={setSelectedSymbol}
-            selectedSymbol={selectedSymbol}
-          />
-        </div>
-
-        {/* 需求2：個股日K查詢（含代號輸入） + 今日候選榜 */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
-          <div className="xl:col-span-2 fade-in fade-in-delay-2">
+        {/* 個股日K查詢（含代號輸入） + 今日候選榜（兩者等高） */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4 items-stretch">
+          <div className="xl:col-span-2 fade-in fade-in-delay-2 h-full">
             <ChartPanel symbol={selectedSymbol} />
           </div>
-          <div className="fade-in fade-in-delay-3">
+          <div className="fade-in fade-in-delay-3 h-full">
             <CandidatesPanel
               data={candidates}
               loading={loading}
@@ -181,22 +163,15 @@ export default function App() {
           </div>
         </div>
 
-        {/* 下方：三方準確率 + 技能績效 */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <div className="fade-in fade-in-delay-4">
-            <AccuracyPanel
-              data={accuracy}
-              loading={loading}
-              error={errors.accuracy}
-            />
-          </div>
-          <div className="fade-in fade-in-delay-4">
-            <SkillsPanel
-              data={skills}
-              loading={loading}
-              error={errors.skills}
-            />
-          </div>
+        {/* 分析師持股追蹤（live 訊號當持股：進場/出場/現價/報酬）— 移至 K線/候選榜下方 */}
+        <div className="mb-4 fade-in fade-in-delay-4">
+          <AnalystPositionsPanel
+            data={positions}
+            loading={loading}
+            error={errors.positions}
+            onSelect={setSelectedSymbol}
+            selectedSymbol={selectedSymbol}
+          />
         </div>
       </main>
     </div>

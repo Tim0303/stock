@@ -38,6 +38,11 @@ html, body, #root {
   padding: 0;
 }
 
+/* 全站字級整體放大：根字級 16px → 20px（+4px，約 1.25×）；Tailwind text-* 與 rem 皆等比放大 */
+html {
+  font-size: 20px;
+}
+
 body {
   background-color: #030712;
   color: #c8daf0;

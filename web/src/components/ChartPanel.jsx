@@ -134,21 +134,33 @@ function buildChartOption(indicators, strategy, showStrategy, maVisible, showBB)
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
-      backgroundColor: 'rgba(10,15,30,0.95)',
+      backgroundColor: 'rgba(10,15,30,0.97)',
       borderColor: '#1f3060',
-      textStyle: { color: '#c8daf0', fontFamily: 'Share Tech Mono', fontSize: 11 },
+      padding: [8, 12],
+      textStyle: { color: '#c8daf0', fontFamily: 'Share Tech Mono', fontSize: 13 },
       formatter(params) {
         if (!params || params.length === 0) return ''
         const date = params[0].axisValue
-        let html = `<div style="color:#4a6080;margin-bottom:4px">${date}</div>`
+        let html = `<div style="color:#8ba3c7;margin-bottom:4px;font-size:13px">${date}</div>`
         params.forEach(p => {
-          if (p.seriesName === 'K線' && Array.isArray(p.value)) {
-            const [o, c, l, h] = p.value
-            const chg = c - o
-            const pct = ((chg / o) * 100).toFixed(2)
-            const color = c >= o ? '#ff3366' : '#00ff88'
-            html += `<div style="color:${color}">O:${o} H:${h} L:${l} C:${c}</div>`
-            html += `<div style="color:${color}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${pct}%)</div>`
+          if (p.seriesName === 'K線') {
+            const i = p.dataIndex
+            // ★直接從原始 OHLC(sorted[i]) 讀，避免 ECharts candlestick 之 p.value 前綴索引造成開/收/高/低錯位
+            const d = sorted[i] || {}
+            const o = d.open != null ? +d.open : null
+            const c = d.close != null ? +d.close : null
+            const l = d.low != null ? +d.low : null
+            const h = d.high != null ? +d.high : null
+            const prevC = (i > 0 && sorted[i - 1] && sorted[i - 1].close != null) ? +sorted[i - 1].close : null
+            const base = prevC != null ? prevC : o          // 當日漲幅以前一日收盤為基準（無前日則用開盤）
+            const chg = c - base
+            const pct = base ? (chg / base) * 100 : 0
+            const color = chg >= 0 ? '#ff3366' : '#00ff88'   // 紅漲綠跌
+            html += `<div style="font-size:14px;line-height:1.8;margin-top:2px">`
+            html += `<span style="color:#8ba3c7">開</span> <b style="color:#e8f1ff">${fmtPrice(o)}</b>　<span style="color:#8ba3c7">收</span> <b style="color:${color}">${fmtPrice(c)}</b><br>`
+            html += `<span style="color:#8ba3c7">高</span> ${fmtPrice(h)}　<span style="color:#8ba3c7">低</span> ${fmtPrice(l)}<br>`
+            html += `<span style="color:#8ba3c7">當日漲幅</span> <b style="color:${color};font-size:15px">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)</b>`
+            html += `</div>`
           } else if (p.seriesName && p.seriesName.startsWith('MA')) {
             if (p.value != null) {
               html += `<div><span style="color:${p.color}">${p.seriesName}</span> ${p.value}</div>`
@@ -405,8 +417,27 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
     return sorted[0]
   }, [strategy])
 
+  // 目前代號的公司名稱（由 symbols 清單查）
+  const activeName = useMemo(() => {
+    const m = symbolList.find((s) => s.symbol === activeSymbol)
+    return m?.name || ''
+  }, [symbolList, activeSymbol])
+
+  // 最新交易日：開盤/收盤/當日漲幅（漲幅以前一日收盤為基準）
+  const dayInfo = useMemo(() => {
+    if (!indicators.length) return null
+    const sorted = [...indicators].sort((a, b) => new Date(b.ts) - new Date(a.ts))
+    const cur = sorted[0], prev = sorted[1]
+    const open = cur?.open != null ? +cur.open : null
+    const close = cur?.close != null ? +cur.close : null
+    const pc = prev?.close != null ? +prev.close : null
+    const chg = (close != null && pc != null) ? close - pc : null
+    const pct = (chg != null && pc) ? (chg / pc) * 100 : null
+    return { open, close, chg, pct, ts: cur?.ts }
+  }, [indicators])
+
   return (
-    <div className="panel rounded-sm" style={{ minHeight: '460px' }}>
+    <div className="panel rounded-sm h-full" style={{ minHeight: '460px' }}>
       <div className="p-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
@@ -415,6 +446,9 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
             個股日K查詢
             {activeSymbol && (
               <span className="mono text-sm font-bold" style={{ color: '#e8f1ff' }}>{activeSymbol}</span>
+            )}
+            {activeName && (
+              <span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.92rem' }}>{activeName}</span>
             )}
           </div>
 
@@ -460,12 +494,23 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
 
         <div className="flex items-center justify-end mb-3 gap-4 flex-wrap">
 
-          {/* Price summary */}
-          {latest && (
-            <div className="flex items-center gap-4 mr-4">
+          {/* Price summary：收盤(大) + 開盤 + 當日漲幅（紅漲綠跌） */}
+          {dayInfo && (() => {
+            const col = (dayInfo.chg ?? 0) >= 0 ? '#ff3366' : '#00ff88'
+            return (
+            <div className="flex items-end gap-5 mr-4">
               <div className="text-right">
-                <div className="mono text-xl font-bold" style={{ color: '#e8f1ff' }}>{fmtPrice(latest.close)}</div>
-                <div className="mono text-xs" style={{ color: '#4a6080' }}>{latest.ts?.slice(0, 10)}</div>
+                <div className="mono font-bold" style={{ color: col, fontSize: '1.9rem', lineHeight: 1 }}>{fmtPrice(dayInfo.close)}</div>
+                <div className="mono text-xs mt-0.5" style={{ color: '#4a6080' }}>{dayInfo.ts?.slice(0, 10)} 收盤</div>
+              </div>
+              <div className="text-right" style={{ lineHeight: 1.5 }}>
+                <div className="mono text-sm" style={{ color: '#8ba3c7' }}>
+                  開 <span style={{ color: '#c8daf0' }}>{fmtPrice(dayInfo.open)}</span>
+                </div>
+                <div className="mono text-base font-bold" style={{ color: col }}>
+                  {dayInfo.chg != null ? `${dayInfo.chg >= 0 ? '+' : ''}${fmtPrice(dayInfo.chg)}` : '—'}
+                  {dayInfo.pct != null ? ` (${dayInfo.pct >= 0 ? '+' : ''}${dayInfo.pct.toFixed(2)}%)` : ''}
+                </div>
               </div>
               {latestStrat && (
                 <div className="text-right">
@@ -478,7 +523,8 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
                 </div>
               )}
             </div>
-          )}
+            )
+          })()}
 
           {/* Controls */}
           <div className="flex items-center gap-2">
@@ -542,6 +588,19 @@ export default function ChartPanel({ symbol, defaultSymbol = '2330.TW' }) {
               </div>
             </>
           )}
+          {/* 名詞說明（滑鼠移上顯示開/收/高/低定義） */}
+          <span
+            className="mono text-xs"
+            style={{ color: '#4a6080', cursor: 'help', marginLeft: 'auto', borderBottom: '1px dotted #2a3a5a' }}
+            title={
+              '開盤價：開盤後，第一筆成交的價格\n' +
+              '收盤價：收盤前，最後一筆成交的價格\n' +
+              '最高價：一段期間內，成交的最高價\n' +
+              '最低價：一段期間內，成交的最低價'
+            }
+          >
+            ⓘ 開/收/高/低 說明
+          </span>
         </div>
 
         {error && (
