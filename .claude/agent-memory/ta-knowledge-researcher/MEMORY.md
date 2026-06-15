@@ -1,0 +1,1 @@
+- [新技術分析手法研究 2026-06-11](research-new-ta-methods-2026-06-11.md) — 6個候選手法評估：Pocket Pivot/Mansfield RS/Supertrend出場/Weinstein Stage2/投信籌碼+技術/RSI隱性背離；Top 2~3建議已產出
