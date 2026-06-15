@@ -123,6 +123,7 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./backups:/backups          # 每日 pg_dump 備份輸出（host 端，與 DB volume 實體分離）
     restart: unless-stopped
     depends_on:
       timescaledb:

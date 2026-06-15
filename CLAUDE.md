@@ -2,12 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> ✅ **狀態：已實作並持續演進（最後更新 2026-06-10）。** 整條學習迴路端到端運作。
+> ✅ **狀態：已實作並持續演進（最後更新 2026-06-15）。** 整條學習迴路端到端運作。
 > **以下為「目前磁碟/DB 現況」（與下方原始藍圖有差異時以此為準）；動手前先讀對應檔案。**
 >
 > **服務（`docker-compose.yml`）**：常駐 `timescaledb`/`mcp`/`api`/`web`/`scheduler`；profile=tools 一次性容器
 > `loader`/`chiploader`/`ml`/`vcp`。port：7001 MCP / 7002 DB / 7003 API / 7004 戰情儀表板。
-> `scheduler` 容器掛 docker socket、crond 兩班：**13:10 TPE `scheduler/intraday_scan.sh`（尾盤即時掃描）** + 15:00 TPE `scheduler/daily_scan.sh`。
+> `scheduler` 容器掛 docker socket、crond **三班**：**13:10 TPE `scheduler/intraday_scan.sh`（尾盤即時掃描）** + 15:00 TPE `scheduler/daily_scan.sh` + **16:00 TPE `scheduler/backup.sh`（每日 DB 備份）**。
+> **DB 備份**（`scheduler/backup.sh`）：每日 `pg_dump -Fc` → host `./backups/stockdb_*.dump`、`pg_restore -l` 驗證、**保留最近 3 份**（依檔名輪替）；輸出與 DB volume 實體分離、`.gitignore` 排除 `backups/`。**跨機器還原**走 `scheduler/restore.sh <dump>`（drop 重建空庫 + TimescaleDB pre/post_restore；roles 為 cluster 全域、ACL 隨 dump）。模型不在 DB 備份內、可 `ml train` 重建；`.env` 不在備份內、需自行複製。
 daily_scan：行情增量→還原→**籌碼增量(三大法人 T86 / 融資融券 MI_MARGN，走 TWSE 依日期端點 chiploader --twse-inst/--twse-margin --days 3，免額度)**→各分析師記錄→快照→評分→**`refresh_analyst_positions()`(刷新持股追蹤)**。
 intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤寫 daily_prices，量張→股×1000)→`vcp watchlist`→`snapshot_eod_signals()`(凍結 5-10-20/spring/bb-trend/vcp 候選到 `eod_intraday_signals`，**純預覽不寫 analyses**)→（有設 `DISCORD_WEBHOOK_URL` 則 curl 推 Discord）。儀表板「尾盤即時訊號」區塊讀 `/api/eod-signals`。
 > **分析師持股追蹤**（`24_analyst_positions.sql`）：把各價量分析師訊號當「模擬持股」——`refresh_analyst_positions(p_since 預設2025-12)` **從策略訊號 view 直接推導**(與 analyses 的 backtest/去重解耦)物化到 `analyst_positions` 表：**進場=訊號日隔日開盤**、出場 5-10-20/spring 走 bracket・bb-trend/bb-breakout 走跌破20MA、同檔同策略5日冷卻去重。`v_analyst_positions`(供 `/api/analyst-positions` + 儀表板「分析師持股追蹤」面板)：持有/待進場全顯示、**已平倉只留當月或平倉後7日**。報酬一律台股**紅漲綠跌**(正紅負綠)。ml-logreg/strat-vcp 為模型/Python，暫不納入此追蹤。
@@ -30,6 +31,7 @@ intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤�
 > ★ `strat-bb-trend` = **5-10-20 進場 + 趨勢續抱出場**（站上20MA續抱／跌破20MA停利／−8%停損／**無時間上限**，2026-06-10 移除原 maxhold60）。與 5-10-20 共用進場，
 >   故**不走 bracket 評分**：主 `evaluate_due_predictions()` 已 `AND skill<>'strat-bb-trend'` 排除，改由 `evaluate_bb_trend()` 評分。
 >   實證：per-signal 期望值≈5-10-20（PF1.37 vs 1.33），但勝率低(32% vs 56%)、上檔不封頂(肥尾單沿20MA走大波段)；5槽位組合報酬大幅領先(836筆win33%+187萬)靠肥尾複利、變異大。
+> ★ `ml-logreg`（2026-06-15 改身分為**「突破成功率模型」**，`ml/main.py`+`ml/features.py`）= **只在布林突破訊號母體上學的 GBDT**：特徵=籌碼(法人吸貨 pre_f/pre_t/pre_tr+融資 pre_mc)+布林(帶寬擴張 bwr/%B/距上軌/5MA斜率/量比)、標籤=該突破 20MA 出場賺否；偵測訊號複用 `v_bb_breakout(is_signal)`(與 strat-bb-breakout 一致)。predict 只在 **proba≥0.40** 寫 `up`(signal_type=`ml-bb`)→等於「**模型過濾後的突破**」分析師，與 strat-bb-breakout(全部突破都進) 並列、各自風險/報酬讓使用者自評。**strat-bb-breakout 不受影響**。評分仍走 bracket(`evaluate_due_predictions`，與他人同口徑)。walk-forward 實證(報告 `布林突破_成功率模型_…`)勝率43%/14x/回撤18%、三項勝基準與手刻濾網；特徵重要性 pre_t(三大法人) 第一。**先前把籌碼焊到「全市場通用模型」無效**(被稀釋 AUC0.617→0.618)，知識要放對母體。舊通用模型 live 預測已於使用者授權下清除(版本重置)。
 > **已退役**：`baseline-momentum`（純對照無用）、`strat-box`（長期 PF≈1.0）——view/資料保留、僅從 API/記錄/snapshot 移除，**勿再加回**。
 >
 > **評分 = TP/SL bracket（非固定 horizon）**：`evaluate_due_predictions()`（`19_bracket_scoring.sql`）對每筆預測，
@@ -39,7 +41,7 @@ intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤�
 > 註：實證上此過濾能提升 PF（spring1.53→2.05、5-10-20 1.37→1.73），改為提示是使用者的產品取捨，非數據結論。
 >
 > **開發慣例**：改 schema 用 `docker cp NN.sql → docker exec psql -f` 套到運行 DB，**不要 `down -v`**（會刪資料）。
-> **回測報告**：統一用 `報告/report_template.ps1` 樣板（白底/正紅負綠/tab/sticky表頭/揭露），輸出到 `報告/`（.gitignore）。
+> **回測報告**：統一用 `report/report_template.ps1` 樣板（白底/正紅負綠/tab/sticky表頭/揭露），HTML+產生器+引擎全收進 `report/`（**已 .gitignore**；舊 `報告/` 已併入並移除）。產生器走 `docker exec stock-timescaledb psql`/`pg_dump`，重訓/模擬腳本需 DDL 時用 admin 連線(`.env` 的 `POSTGRES_USER/PASSWORD`)。
 > **實證選股原則**見記憶 `empirical-selection-principles`（成交量看情境、出場決定勝率、趨勢命門、分散>all-in）。
 
 ---
@@ -189,9 +191,10 @@ upsert_skill(技能演化)
 ## 資料誠信注意事項
 
 - `06_seed` 為合成假價，只生平日（loader 會以真實日線覆蓋）；不可把 seed 資料當真實行情分析。
-- ML（ml-logreg）已升級（2026-06-10）：bracket 標籤 + 14 特徵 + 時間切分 OOS 驗證 + 機率門檻 0.60 選股。
-  OOS AUC≈0.57（有真實訊號、非擲硬幣）、門檻 0.60 命中率 51.5% vs 基準 47.4%、平均 +0.43%。
-  仍偏 baseline：訊號弱、門檻高（弱市常 0 買進屬正常抽手）——不要對其準確率做過度推論。
+- ML（ml-logreg）**現為「突破成功率模型」（2026-06-15，見上方 ★ml-logreg）**：只在布林突破訊號母體學
+  （籌碼法人吸貨+布林帶寬→該突破 20MA 出場賺否），proba≥0.40 寫 up。**沿革**：原為全市場 bracket 預測
+  (LR→GBDT，AUC≈0.57-0.62、門檻0.60-0.70、仍偏 baseline)；把籌碼焊到通用模型無效(被稀釋)，改放對母體才有效。
+  模型存 `ml_models` volume(檔名仍 `logreg.pkl`)、daily_scan 每週六重訓、每日 predict。
 - 美股無籌碼面資料；涉及 `chip_*` 的邏輯需判斷市場別。
 
 ---
@@ -200,6 +203,7 @@ upsert_skill(技能演化)
 
 - **減資還原未處理**（不在股利表，worst 回撤可能含減資跳水）。
 - **生存者偏差**：回測池僅現存 ~300 檔、無下市股，會高估報酬（尤其空頭年）——報告須揭露。
-- **ML 升級（已完成 2026-06-10）**：ml-logreg 改 bracket 標籤 + 14 特徵（含情境量/距壓力支撐/波動收縮/大盤寬度）+ 時間切分 OOS（AUC0.57）+ 門檻 0.60。
-  模型存 `ml_models` volume，daily_scan 每週六重訓、每日 predict 載入。後續可試：非線性模型(GBDT)、籌碼特徵(台股)、依大盤調門檻。
+- **ML 升級（已完成 2026-06-15）**：ml-logreg 演進為「突破成功率模型」(GBDT，籌碼+布林學突破成敗，門檻0.40，
+  walk-forward 勝率43%/14x/回撤18%)；先前 bracket+14特徵通用 GBDT(AUC0.62) 已被取代。後續可試：依大盤調門檻、
+  calibration、把成功率模型推廣到其它策略(spring/5-10-20)當「進場品質濾網」。
 - 演化器（champion-challenger）尚未自動換冠軍；儀表板標的詳情頁 / WebSocket、對外加認證待補。

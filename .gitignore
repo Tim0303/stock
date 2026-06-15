@@ -26,3 +26,6 @@ Thumbs.db
 
 # 產出報告（HTML + 產生器/引擎腳本，非原始碼）
 report/
+
+# DB 備份（pg_dump 輸出，勿進版控）
+backups/
