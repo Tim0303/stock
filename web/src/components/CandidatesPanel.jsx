@@ -45,12 +45,7 @@ function ScoreBar({ score }) {
   else if (pct >= 40) color = '#ffb800'
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="mono text-sm font-bold" style={{ color, minWidth: '28px' }}>{pct}</span>
-      <div className="score-bar-bg flex-1" style={{ minWidth: '48px' }}>
-        <div className="score-bar-fill" style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${color}88, ${color})` }} />
-      </div>
-    </div>
+    <span className="mono text-sm font-bold" style={{ color }}>{Math.round(pct)}</span>
   )
 }
 
@@ -107,13 +102,13 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
             <table className="w-full text-sm">
               <thead style={{ position: 'sticky', top: 0, background: '#0a1020', zIndex: 1 }}>
                 <tr style={{ borderBottom: '1px solid #1a2540' }}>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>RANK</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>名稱</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分析師</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分數</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>RANK</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>代號</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>名稱</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分析師</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>分數</th>
                   <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>推薦數</th>
-                  <th className="mono text-left pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>訊號</th>
+                  <th className="mono text-center pb-2 text-xs" style={{ color: '#4a6080', fontWeight: 400 }}>訊號</th>
                 </tr>
               </thead>
               <tbody>
@@ -130,19 +125,19 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
                       }}
                       onClick={() => onSelect(row.symbol)}
                     >
-                      <td className="py-2.5 px-2">
+                      <td className="py-2.5 px-2 text-center">
                         <span className="mono text-xs" style={{ color: '#4a6080' }}>#{row.rank}</span>
                       </td>
-                      <td className="py-2.5 px-2">
+                      <td className="py-2.5 px-2 text-center">
                         <span className="mono text-sm font-bold" style={{ color: isSelected ? '#00d4ff' : '#c8daf0' }}>{row.symbol}</span>
                       </td>
-                      <td className="py-2.5 px-2">
+                      <td className="py-2.5 px-2 text-center">
                         <span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.85rem' }}>{row.name || '—'}</span>
                       </td>
-                      <td className="py-2.5 px-2">
+                      <td className="py-2.5 px-2 text-center">
                         <SkillCell skill={row.skill} />
                       </td>
-                      <td className="py-2.5 px-2" style={{ minWidth: '100px' }}>
+                      <td className="py-2.5 px-2 text-center">
                         <ScoreBar score={row.score} />
                       </td>
                       <td className="py-2.5 px-2 text-center">
@@ -150,7 +145,7 @@ export default function CandidatesPanel({ data, loading, error, selectedSymbol, 
                           {row.n_skills || 1}{Number(row.n_skills) >= 2 ? '★' : ''}
                         </span>
                       </td>
-                      <td className="py-2.5 px-2">
+                      <td className="py-2.5 px-2 text-center">
                         <SignalBadge signalType={row.signal_type} />
                       </td>
                     </tr>

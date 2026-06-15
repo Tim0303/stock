@@ -55,11 +55,11 @@ function SkillCard({ skill, rows, onSelect, selectedSymbol }) {
                     }}
                     onClick={() => onSelect && onSelect(row.symbol)}
                   >
-                    <td className="py-2 px-2" style={{ whiteSpace: 'nowrap' }}>
+                    <td className="py-2 px-2 text-center" style={{ whiteSpace: 'nowrap' }}>
                       <span className="mono text-sm font-bold" style={{ color: isSel ? meta.accent : '#c8daf0' }}>{row.symbol}</span>
                       <span className="ml-1.5" style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.78rem' }}>{row.name || ''}</span>
                     </td>
-                    <td className="py-2 px-2 text-right">
+                    <td className="py-2 px-2 text-center">
                       <span className="mono text-sm font-bold" style={{ color: Number(row.score) >= 80 ? '#00ff88' : Number(row.score) >= 60 ? '#00d4ff' : '#ffb800' }}>
                         {row.score == null ? '—' : Math.round(row.score)}
                       </span>
@@ -67,7 +67,7 @@ function SkillCard({ skill, rows, onSelect, selectedSymbol }) {
                         <span className="mono ml-1.5" style={{ color: meta.accent, fontSize: '0.68rem' }}>{row.signal_type}</span>
                       )}
                     </td>
-                    <td className="py-2 px-2 text-right" style={{ whiteSpace: 'nowrap' }}>
+                    <td className="py-2 px-2 text-center" style={{ whiteSpace: 'nowrap' }}>
                       <span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmt(row.close)}</span>
                       {row.target_price != null && (
                         <span className="mono text-xs" style={{ color: '#00ff88' }}> →{fmt(row.target_price)}</span>

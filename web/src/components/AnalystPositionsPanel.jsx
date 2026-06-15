@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 
 const SKILL_META = {
   'strat-vcp': { label: 'VCP 突破', accent: '#00ff88' },
@@ -9,6 +9,21 @@ const SKILL_META = {
   'ml-logreg': { label: 'ML 預測', accent: '#ff6ec7' },
 }
 const ORDER = ['strat-vcp', 'strat-5-10-20', 'strat-spring', 'strat-bb-trend', 'strat-bb-breakout', 'ml-logreg']
+
+// 可排序欄位定義（type 決定比較方式）
+const COLS = [
+  { key: 'symbol', label: '代號', type: 'str' },
+  { key: 'name', label: '名稱', type: 'str' },
+  { key: 'entry_date', label: '進場日', type: 'str' },
+  { key: 'exit_date', label: '出場日', type: 'str' },
+  { key: 'entry_price', label: '進場價', type: 'num' },
+  { key: 'exit_price', label: '出場價', type: 'num' },
+  { key: 'current_price', label: '現價', type: 'num' },
+  { key: 'ret_pct', label: '報酬', type: 'num' },
+  { key: 'status', label: '狀態', type: 'status' },
+]
+// 狀態排序權重：持有中 → 待進場 → 已平倉
+const STATUS_RANK = { holding: 0, pending: 1, closed: 2 }
 
 // 台股慣例：紅漲綠跌（正=紅、負=綠）
 function retColor(v) {
@@ -21,12 +36,42 @@ function fmt(v, d = 2) {
 
 export default function AnalystPositionsPanel({ data = [], loading, error, onSelect, selectedSymbol }) {
   const [active, setActive] = useState(null)
+  const [sort, setSort] = useState({ key: null, dir: 'asc' })
   const bySkill = {}
   for (const r of data) { (bySkill[r.skill] || (bySkill[r.skill] = [])).push(r) }
   const skills = ORDER.filter((s) => bySkill[s] && bySkill[s].length)
   const cur = (active && bySkill[active]) ? active : (skills[0] || null)
-  const rows = cur ? bySkill[cur] : []
+  const baseRows = cur ? bySkill[cur] : []
   const meta = SKILL_META[cur] || { label: cur, accent: '#8ba3c7' }
+
+  // 點表頭排序：同欄循環 升序 → 降序 → 復原(原始順序)；換欄則從升序開始
+  const clickHeader = (key) =>
+    setSort((s) => {
+      if (s.key !== key) return { key, dir: 'asc' }
+      if (s.dir === 'asc') return { key, dir: 'desc' }
+      return { key: null, dir: 'asc' }   // 第三次點擊：清除排序，回到原始順序
+    })
+
+  const rows = useMemo(() => {
+    if (!sort.key) return baseRows
+    const col = COLS.find((c) => c.key === sort.key)
+    const sign = sort.dir === 'asc' ? 1 : -1
+    return [...baseRows].sort((a, b) => {
+      let av = a[sort.key], bv = b[sort.key]
+      if (col.type === 'status') { av = STATUS_RANK[av] ?? 9; bv = STATUS_RANK[bv] ?? 9 }
+      else if (col.type === 'num') {
+        av = (av === null || av === undefined || av === '') ? null : Number(av)
+        bv = (bv === null || bv === undefined || bv === '') ? null : Number(bv)
+        // 空值一律排在最後（不受升降序影響）
+        if (av === null && bv === null) return 0
+        if (av === null) return 1
+        if (bv === null) return -1
+      } else { av = av || ''; bv = bv || '' }
+      if (av < bv) return -1 * sign
+      if (av > bv) return 1 * sign
+      return 0
+    })
+  }, [baseRows, sort])
   const holdN = rows.filter((r) => r.status === 'holding').length
   const pendN = rows.filter((r) => r.status === 'pending').length
   const closeN = rows.length - holdN - pendN
@@ -91,15 +136,23 @@ export default function AnalystPositionsPanel({ data = [], loading, error, onSel
               <table className="w-full text-sm">
                 <thead style={{ position: 'sticky', top: 0, background: '#0a1020', zIndex: 1 }}>
                   <tr style={{ borderBottom: '1px solid #1a2540' }}>
-                    <th className="mono text-left pb-2 text-xs" style={th}>代號</th>
-                    <th className="mono text-left pb-2 text-xs" style={th}>名稱</th>
-                    <th className="mono text-left pb-2 text-xs" style={th}>進場日</th>
-                    <th className="mono text-left pb-2 text-xs" style={th}>出場日</th>
-                    <th className="mono text-right pb-2 text-xs" style={th}>進場價</th>
-                    <th className="mono text-right pb-2 text-xs" style={th}>出場價</th>
-                    <th className="mono text-right pb-2 text-xs" style={th}>現價</th>
-                    <th className="mono text-right pb-2 text-xs" style={th}>報酬</th>
-                    <th className="mono text-center pb-2 text-xs" style={th}>狀態</th>
+                    {COLS.map((c) => {
+                      const isS = sort.key === c.key
+                      return (
+                        <th
+                          key={c.key}
+                          className="mono text-center pb-2 text-xs select-none"
+                          style={{ ...th, cursor: 'pointer', color: isS ? meta.accent : '#4a6080' }}
+                          onClick={() => clickHeader(c.key)}
+                          title="點擊排序"
+                        >
+                          {c.label}
+                          <span className="ml-1" style={{ color: isS ? meta.accent : '#2a3a5a' }}>
+                            {isS ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                          </span>
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -112,14 +165,14 @@ export default function AnalystPositionsPanel({ data = [], loading, error, onSel
                         style={{ borderBottom: '1px solid #0d1426', cursor: 'pointer', background: sel ? `${meta.accent}10` : undefined }}
                         onClick={() => onSelect && onSelect(r.symbol)}
                       >
-                        <td className="py-2 px-2"><span className="mono text-sm font-bold" style={{ color: sel ? meta.accent : '#c8daf0' }}>{r.symbol}</span></td>
-                        <td className="py-2 px-2"><span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.82rem' }}>{r.name || '—'}</span></td>
-                        <td className="py-2 px-2"><span className="mono text-xs" style={{ color: '#8ba3c7' }}>{r.entry_date || '—'}</span></td>
-                        <td className="py-2 px-2"><span className="mono text-xs" style={{ color: r.exit_date ? '#8ba3c7' : '#2a3a5a' }}>{r.exit_date || '—'}</span></td>
-                        <td className="py-2 px-2 text-right"><span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmt(r.entry_price)}</span></td>
-                        <td className="py-2 px-2 text-right"><span className="mono text-xs" style={{ color: r.exit_price ? '#8ba3c7' : '#2a3a5a' }}>{fmt(r.exit_price)}</span></td>
-                        <td className="py-2 px-2 text-right"><span className="mono text-xs" style={{ color: '#c8daf0' }}>{fmt(r.current_price)}</span></td>
-                        <td className="py-2 px-2 text-right"><span className="mono text-sm font-bold" style={{ color: retColor(r.ret_pct) }}>{r.ret_pct == null ? '—' : `${Number(r.ret_pct) >= 0 ? '+' : ''}${r.ret_pct}%`}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-sm font-bold" style={{ color: sel ? meta.accent : '#c8daf0' }}>{r.symbol}</span></td>
+                        <td className="py-2 px-2 text-center"><span style={{ color: '#8ba3c7', fontFamily: 'Noto Sans TC', fontSize: '0.82rem' }}>{r.name || '—'}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-xs" style={{ color: '#8ba3c7' }}>{r.entry_date || '—'}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-xs" style={{ color: r.exit_date ? '#8ba3c7' : '#2a3a5a' }}>{r.exit_date || '—'}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-xs" style={{ color: '#8ba3c7' }}>{fmt(r.entry_price)}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-xs" style={{ color: r.exit_price ? '#8ba3c7' : '#2a3a5a' }}>{fmt(r.exit_price)}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-xs" style={{ color: '#c8daf0' }}>{fmt(r.current_price)}</span></td>
+                        <td className="py-2 px-2 text-center"><span className="mono text-sm font-bold" style={{ color: retColor(r.ret_pct) }}>{r.ret_pct == null ? '—' : `${Number(r.ret_pct) >= 0 ? '+' : ''}${r.ret_pct}%`}</span></td>
                         <td className="py-2 px-2 text-center">
                           {(() => {
                             const st = r.status === 'holding'
