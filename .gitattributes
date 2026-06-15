@@ -1,0 +1,2 @@
+# Shell 腳本一律 LF（避免 Windows CRLF 讓 Linux/容器內 sh 執行出錯，尤其 restore.sh 在 host 直跑）
+*.sh text eol=lf
