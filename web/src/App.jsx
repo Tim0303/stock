@@ -5,11 +5,14 @@ import AnalystPicksPanel from './components/AnalystPicksPanel.jsx'
 import EodSignalsPanel from './components/EodSignalsPanel.jsx'
 import AnalystPositionsPanel from './components/AnalystPositionsPanel.jsx'
 import Header from './components/Header.jsx'
+import TrialBanner from './components/TrialBanner.jsx'
+import { apiFetch as apiRequest } from './api.js'
 
 const REFRESH_INTERVAL = 30 // seconds
 
-async function apiFetch(path) {
-  const res = await fetch(path)
+async function apiFetch(path, opts) {
+  // 帶 cookie + CSRF；401→/login、402/403(試用到期)→/account（由 api.js 處理）
+  const res = await apiRequest(path, opts)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -86,8 +89,7 @@ export default function App() {
   // 尾盤即時訊號手動觸發：抓即時報價+重算 snapshot，再重載資料
   const refreshEodSignals = useCallback(async () => {
     try {
-      const res = await fetch('/api/eod-signals/refresh', { method: 'POST' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await apiFetch('/api/eod-signals/refresh', { method: 'POST' })
     } finally {
       await fetchAll()
     }
@@ -122,6 +124,7 @@ export default function App() {
       />
 
       <main className="p-4 max-w-screen-2xl mx-auto">
+        <TrialBanner />
         {/* 尾盤即時訊號（盤中 13:10 即時報價試算，預覽不記錄）— 時效優先置頂 */}
         <div className="mb-4 fade-in fade-in-delay-1">
           <EodSignalsPanel

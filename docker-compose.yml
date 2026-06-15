@@ -15,6 +15,8 @@ services:
       # 學習表/行情表的應用角色密碼，供 init SQL（T1）建立角色時使用
       STOCK_APP_PASSWORD: ${STOCK_APP_PASSWORD}
       STOCK_READONLY_PASSWORD: ${STOCK_READONLY_PASSWORD}
+      # 認證表專屬角色密碼，供 25_auth.sql 建立 stock_auth 時 \getenv 使用
+      STOCK_AUTH_PASSWORD: ${STOCK_AUTH_PASSWORD}
     ports:
       - "7002:5432"
     volumes:
@@ -49,6 +51,19 @@ services:
       DATABASE_URL: postgresql://stock_readonly:${STOCK_READONLY_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
       # 可寫連線（僅供「尾盤即時訊號」手動重整端點：抓MIS暫定盤+snapshot）；其餘路由維持唯讀
       WRITE_DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      # 認證/訂閱：auth 表專屬連線（與股票唯讀連線分離，PII 最小權限）+ JWT/cookie/試用/寄信設定
+      AUTH_DATABASE_URL: postgresql://stock_auth:${STOCK_AUTH_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:7004}
+      TRIAL_DAYS: ${TRIAL_DAYS:-14}
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@localhost}
+      SMTP_TLS: ${SMTP_TLS:-true}
     ports:
       - "7003:8000"
     depends_on:
@@ -121,6 +136,8 @@ services:
       FINMIND_TOKEN: ${FINMIND_TOKEN}
       # 尾盤即時掃描（intraday_scan.sh 13:10）推播 Discord 用的 Incoming Webhook URL（留空則略過推播）
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      # 試用到期批次（expire_trials.sh）連 stock_auth 用
+      STOCK_AUTH_PASSWORD: ${STOCK_AUTH_PASSWORD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backups:/backups          # 每日 pg_dump 備份輸出（host 端，與 DB volume 實體分離）

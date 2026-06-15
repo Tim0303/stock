@@ -16,6 +16,11 @@ import psycopg2.extras
 import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.concurrency import run_in_threadpool
+
+import auth
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 # 可寫連線（僅供尾盤即時訊號手動重整端點）；未設則該端點回 503
@@ -146,6 +151,21 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+# ── 認證/訂閱閘門（auth-agent）────────────────────────────────────────────────
+# rate-limit（slowapi）+ 自建登入/註冊 router。
+app.state.limiter = auth.limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.include_router(auth.router)
+
+
+# 所有 /api 資料端點上鎖（公開：health/auth/docs）。gate_request 走 threadpool 避免阻塞 event loop。
+@app.middleware("http")
+async def _auth_gate(request, call_next):
+    denied = await run_in_threadpool(auth.gate_request, request)
+    if denied is not None:
+        return denied
+    return await call_next(request)
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────
