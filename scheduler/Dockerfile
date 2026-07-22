@@ -9,7 +9,7 @@ COPY expire_trials.sh /expire_trials.sh
 RUN sed -i 's/\r$//' /daily_scan.sh /intraday_scan.sh /backup.sh /expire_trials.sh \
  && chmod +x /daily_scan.sh /intraday_scan.sh /backup.sh /expire_trials.sh \
  && printf '%s\n%s\n%s\n%s\n' \
-      "10 13 * * * /intraday_scan.sh >> /var/log/intraday_scan.log 2>&1" \
+      "10 13 * * 1-5 /intraday_scan.sh >> /var/log/intraday_scan.log 2>&1" \
       "0 15 * * * /daily_scan.sh >> /var/log/daily_scan.log 2>&1" \
       "0 16 * * * /backup.sh >> /var/log/backup.log 2>&1" \
       "30 0 * * * /expire_trials.sh >> /var/log/expire_trials.log 2>&1" \

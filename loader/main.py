@@ -376,13 +376,19 @@ def run_intraday():
 
     chans = [to_chan(s) for s in sorted(syms)]
     today = date.today()
-    rows, missing = [], 0
+    today_str = today.strftime("%Y%m%d")
+    rows, missing, stale = [], 0, 0
     BATCH = 50
     for i in range(0, len(chans), BATCH):
         for s in fetch_mis_batch(chans[i:i + BATCH]):
             code = (s.get("c") or "").strip()
             sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
             if sym not in syms:
+                continue
+            # 交易日防呆：MIS 'd' = 該檔最近交易日(YYYYMMDD)。非交易日(週末/國定假日)或
+            # 開盤前，d 會停留在上一交易日 → 跳過，避免把週五殘影寫進週六/週日(K線假列源頭)。
+            if (s.get("d") or "").strip() != today_str:
+                stale += 1
                 continue
             close = _mis_price(s)   # z→pz→買賣中點，盡量取得現價
             if close is None:
@@ -395,7 +401,7 @@ def run_intraday():
         time.sleep(0.4)
 
     if not rows:
-        print("[intraday] 無即時報價（非盤中或全部無成交）")
+        print(f"[intraday] 無今日即時報價（非交易日/非盤中；跳過過期快照 {stale}）")
         cur.close(); conn.close(); return
     execute_values(cur, """
         INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
@@ -405,7 +411,7 @@ def run_intraday():
             close = EXCLUDED.close, volume = EXCLUDED.volume
     """, rows)
     conn.commit()
-    print(f"[intraday] {today} 暫定盤 UPSERT {len(rows)} 檔（無成交跳過 {missing}）")
+    print(f"[intraday] {today} 暫定盤 UPSERT {len(rows)} 檔（無成交跳過 {missing}、過期快照跳過 {stale}）")
     cur.close()
     conn.close()
 
