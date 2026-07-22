@@ -6,7 +6,8 @@
 services:
   # ── 資料地基：TimescaleDB（PG16 + TimescaleDB）────────────────────────
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    # pin 到與備份 dump 相同的 TimescaleDB/PG 版本，避免跨機器還原時 post_restore catalog 版本不符
+    image: timescale/timescaledb:2.27.2-pg16
     container_name: stock-timescaledb
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
