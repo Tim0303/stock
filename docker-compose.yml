@@ -49,6 +49,9 @@ services:
     build: ./api
     container_name: stock-api
     environment:
+      # 台北時區：容器預設 UTC，會讓「今日暫定盤」在台北 00:00–08:00 寫成前一天（曾造成週日假 K 線）。
+      # 程式內另有顯式 UTC+8 保險（api/app.py TPE），此處讓 log/系統時間也對齊台北。
+      TZ: Asia/Taipei
       DATABASE_URL: postgresql://stock_readonly:${STOCK_READONLY_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
       # 可寫連線（僅供「尾盤即時訊號」手動重整端點：抓MIS暫定盤+snapshot）；其餘路由維持唯讀
       WRITE_DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}

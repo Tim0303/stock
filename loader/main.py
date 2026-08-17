@@ -12,7 +12,7 @@ import os
 import sys
 import time
 import argparse
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 import pandas as pd
@@ -316,6 +316,7 @@ def run_adjust():
 # 尾盤即時掃描用：13:10 抓現價當今日暫定 OHLC 寫入 daily_prices，讓策略 view 即時算今日訊號；
 # 15:00 正式收盤那班會以 FinMind 官方收盤 UPSERT 覆蓋同一列。adj_factor 維持 1.0（最新一筆慣例）。
 MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+TPE = timezone(timedelta(hours=8))   # 台北時區（台灣無夏令時），交易日判斷一律以此為準
 
 
 def _mis_num(x):
@@ -375,7 +376,8 @@ def run_intraday():
         return ("otc_" if sym.endswith(".TWO") else "tse_") + code + ".tw"
 
     chans = [to_chan(s) for s in sorted(syms)]
-    today = date.today()
+    # 用台北日期（容器預設 UTC，date.today() 在台北 00:00–08:00 會算成前一天）
+    today = datetime.now(TPE).date()
     today_str = today.strftime("%Y%m%d")
     rows, missing, stale = [], 0, 0
     BATCH = 50

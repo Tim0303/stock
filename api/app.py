@@ -8,7 +8,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg2
@@ -26,6 +26,9 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # 可寫連線（僅供尾盤即時訊號手動重整端點）；未設則該端點回 503
 WRITE_DATABASE_URL = os.environ.get("WRITE_DATABASE_URL")
 MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+# 台北時區（台灣無夏令時，固定 UTC+8）。容器預設跑 UTC，若用 date.today() 取「今天」，
+# 台北 00:00–08:00 的請求會算成前一天 → 暫定盤寫錯日期（曾把週一凌晨的重整寫成週日 K 線）。
+TPE = timezone(timedelta(hours=8))
 
 # analyst-picks 涉及昂貴的策略 view（v_strategy_latest/box 是全歷史 DISTINCT ON 掃描，
 # 單查可達數十秒甚至數分鐘，會把 DB CPU 打到 100%）。因此：
@@ -83,7 +86,10 @@ def _mis_batch(ex_chs):
 
 
 def _refresh_intraday():
-    """抓 MIS 即時報價 → 今日暫定 OHLCV upsert daily_prices → snapshot_eod_signals()。回傳 (n_prices, n_signals)。"""
+    """抓 MIS 即時報價 → 今日暫定 OHLCV upsert daily_prices → snapshot_eod_signals()。回傳 (n_prices, n_signals)。
+
+    與 `loader/main.py::run_intraday()` 同一套交易日防呆：非交易日/開盤前一律不寫，回 (0, 0)。
+    """
     if not WRITE_DATABASE_URL:
         raise HTTPException(status_code=503, detail="manual refresh not configured (no WRITE_DATABASE_URL)")
     conn = psycopg2.connect(WRITE_DATABASE_URL)
@@ -92,13 +98,19 @@ def _refresh_intraday():
         cur.execute("SELECT symbol FROM symbols WHERE market='TW'")
         syms = {r[0] for r in cur.fetchall()}
         chans = [("otc_" if s.endswith(".TWO") else "tse_") + s.split(".")[0] + ".tw" for s in syms]
-        today = date.today()
-        rows = []
+        today = datetime.now(TPE).date()          # 用台北日期，不用容器 UTC 的 date.today()
+        today_str = today.strftime("%Y%m%d")
+        rows, stale = [], 0
         for i in range(0, len(chans), 50):
             for s in _mis_batch(chans[i:i + 50]):
                 code = (s.get("c") or "").strip()
                 sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
                 if sym not in syms:
+                    continue
+                # 交易日防呆：MIS 'd' = 該檔最近交易日(YYYYMMDD)。非交易日(週末/國定假日)或
+                # 開盤前，d 會停留在上一交易日 → 跳過，避免把殘影寫成當日 K 線（假列源頭）。
+                if (s.get("d") or "").strip() != today_str:
+                    stale += 1
                     continue
                 px = _mis_price(s)
                 if px is None:
@@ -107,14 +119,16 @@ def _refresh_intraday():
                 vol = _mis_num(s.get("v"))
                 rows.append((sym, today, o, h or px, l or px, px,
                              int(vol * 1000) if vol else None, 1.0))
-        if rows:
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
-                VALUES %s
-                ON CONFLICT (symbol, ts) DO UPDATE SET
-                    open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
-                    close=EXCLUDED.close, volume=EXCLUDED.volume
-            """, rows)
+        if not rows:
+            # 非交易日/開盤前：不寫暫定盤，也不重做快照（避免產生非交易日的空快照）
+            return 0, 0
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
+            VALUES %s
+            ON CONFLICT (symbol, ts) DO UPDATE SET
+                open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+                close=EXCLUDED.close, volume=EXCLUDED.volume
+        """, rows)
         cur.execute("SELECT snapshot_eod_signals()")
         n_sig = cur.fetchone()[0]
         conn.commit()
@@ -571,6 +585,7 @@ def eod_signals_refresh():
     """
     盤中手動觸發一次尾盤即時掃描：TWSE MIS 即時報價→今日暫定收盤→`snapshot_eod_signals()`。
     需 `WRITE_DATABASE_URL`（可寫連線）；未設回 503。VCP 仍沿用最近一次 watchlist（不在此重算）。
+    非交易日/開盤前 MIS 只有上一交易日殘影，此時不寫任何資料，回 `refreshed:false`＋沿用現有快照。
     """
     try:
         n_px, n_sig = _refresh_intraday()
@@ -594,7 +609,8 @@ def eod_signals_refresh():
 
     scan_time = rows[0]["scan_time"].isoformat() if rows else None
     scan_date = rows[0]["scan_date"] if rows else None
-    return {"refreshed": True, "prices": n_px, "count": len(rows),
+    return {"refreshed": n_px > 0, "prices": n_px, "count": len(rows),
+            "note": None if n_px else "非交易日/開盤前：無即時報價，未更新暫定盤（顯示前次快照）",
             "scan_time": scan_time, "scan_date": scan_date, "data": rows}
 
 
