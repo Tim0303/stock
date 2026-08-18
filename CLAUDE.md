@@ -41,6 +41,11 @@ intraday_scan：`loader --intraday`(TWSE MIS 即時報價→今日暫定收盤�
 > 註：實證上此過濾能提升 PF（spring1.53→2.05、5-10-20 1.37→1.73），改為提示是使用者的產品取捨，非數據結論。
 >
 > **開發慣例**：改 schema 用 `docker cp NN.sql → docker exec psql -f` 套到運行 DB，**不要 `down -v`**（會刪資料）。
+> **盤中報價唯一收口 = `common/twse_mis.py`**（2026-08-18）：MIS 抓取＋**交易日防呆**（比對 MIS `d` 欄＝最近交易日；
+> 非交易日/開盤前必得 rows=[]，呼叫端不得寫任何資料）＋台北日期 `TPE`（容器跑 UTC，用 `date.today()` 會在台北凌晨寫成前一天）。
+> `loader --intraday` 與 API `/api/eod-signals/refresh` 共用此檔，**勿再各自複製一份**——先前兩份分歧只修一邊，
+> 導致週日（2026-08-09）被寫進 301 檔上一交易日殘影的假 K 線。為此 **api/loader 的 build context = 專案根目錄**
+> （`dockerfile: api/Dockerfile` / `loader/Dockerfile`，根目錄 `.dockerignore` 白名單制），image 名與 service 名不變。
 > **回測報告**：統一用 `report/report_template.ps1` 樣板（白底/正紅負綠/tab/sticky表頭/揭露），HTML+產生器+引擎全收進 `report/`（**已 .gitignore**；舊 `報告/` 已併入並移除）。產生器走 `docker exec stock-timescaledb psql`/`pg_dump`，重訓/模擬腳本需 DDL 時用 admin 連線(`.env` 的 `POSTGRES_USER/PASSWORD`)。
 > **實證選股原則**見記憶 `empirical-selection-principles`（成交量看情境、出場決定勝率、趨勢命門、分散>all-in）。
 
