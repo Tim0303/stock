@@ -1,11 +1,13 @@
+# build context = 專案根目錄（為了 COPY common/），dockerfile 由 compose 指定 api/Dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py auth.py db_auth.py email_sender.py .
+COPY common/ ./common/
+COPY api/app.py api/auth.py api/db_auth.py api/email_sender.py ./
 
 EXPOSE 8000
 

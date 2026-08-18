@@ -8,12 +8,10 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg2
 import psycopg2.extras
-import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -21,14 +19,11 @@ from slowapi.errors import RateLimitExceeded
 from starlette.concurrency import run_in_threadpool
 
 import auth
+from common import twse_mis
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 # 可寫連線（僅供尾盤即時訊號手動重整端點）；未設則該端點回 503
 WRITE_DATABASE_URL = os.environ.get("WRITE_DATABASE_URL")
-MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-# 台北時區（台灣無夏令時，固定 UTC+8）。容器預設跑 UTC，若用 date.today() 取「今天」，
-# 台北 00:00–08:00 的請求會算成前一天 → 暫定盤寫錯日期（曾把週一凌晨的重整寫成週日 K 線）。
-TPE = timezone(timedelta(hours=8))
 
 # analyst-picks 涉及昂貴的策略 view（v_strategy_latest/box 是全歷史 DISTINCT ON 掃描，
 # 單查可達數十秒甚至數分鐘，會把 DB CPU 打到 100%）。因此：
@@ -47,48 +42,11 @@ def get_conn():
 
 
 # ── 尾盤即時訊號「手動重整」：抓 MIS 即時報價→今日暫定盤→snapshot（需可寫連線）─────────
-def _mis_num(x):
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if v > 0 else None
-
-
-def _mis_price(s):
-    """現價優先序：z 成交價 → pz 上一筆 → 買賣中點 → 高低中點。"""
-    for k in ("z", "pz"):
-        v = _mis_num(s.get(k))
-        if v:
-            return v
-    bv = _mis_num((s.get("b") or "").split("_")[0])
-    av = _mis_num((s.get("a") or "").split("_")[0])
-    if bv and av:
-        return round((bv + av) / 2, 4)
-    if bv or av:
-        return bv or av
-    h, l = _mis_num(s.get("h")), _mis_num(s.get("l"))
-    if h and l:
-        return round((h + l) / 2, 4)
-    return None
-
-
-def _mis_batch(ex_chs):
-    try:
-        r = requests.get(MIS_URL, params={"ex_ch": "|".join(ex_chs), "json": "1", "delay": "0",
-                                          "_": str(int(time.time() * 1000))},
-                         headers={"User-Agent": "Mozilla/5.0",
-                                  "Referer": "https://mis.twse.com.tw/stock/index.jsp"}, timeout=20)
-        b = r.json()
-    except Exception:
-        return []
-    return (b.get("msgArray") or []) if b.get("rtcode") == "0000" else []
-
-
+# 報價抓取與交易日防呆共用 common/twse_mis.py（與 loader 同一份，勿在此另寫）。
 def _refresh_intraday():
     """抓 MIS 即時報價 → 今日暫定 OHLCV upsert daily_prices → snapshot_eod_signals()。回傳 (n_prices, n_signals)。
 
-    與 `loader/main.py::run_intraday()` 同一套交易日防呆：非交易日/開盤前一律不寫，回 (0, 0)。
+    交易日防呆由 `twse_mis.fetch_intraday_rows()` 負責：非交易日/開盤前必得 rows=[]，此時一律不寫，回 (0, 0)。
     """
     if not WRITE_DATABASE_URL:
         raise HTTPException(status_code=503, detail="manual refresh not configured (no WRITE_DATABASE_URL)")
@@ -97,38 +55,11 @@ def _refresh_intraday():
         cur = conn.cursor()
         cur.execute("SELECT symbol FROM symbols WHERE market='TW'")
         syms = {r[0] for r in cur.fetchall()}
-        chans = [("otc_" if s.endswith(".TWO") else "tse_") + s.split(".")[0] + ".tw" for s in syms]
-        today = datetime.now(TPE).date()          # 用台北日期，不用容器 UTC 的 date.today()
-        today_str = today.strftime("%Y%m%d")
-        rows, stale = [], 0
-        for i in range(0, len(chans), 50):
-            for s in _mis_batch(chans[i:i + 50]):
-                code = (s.get("c") or "").strip()
-                sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
-                if sym not in syms:
-                    continue
-                # 交易日防呆：MIS 'd' = 該檔最近交易日(YYYYMMDD)。非交易日(週末/國定假日)或
-                # 開盤前，d 會停留在上一交易日 → 跳過，避免把殘影寫成當日 K 線（假列源頭）。
-                if (s.get("d") or "").strip() != today_str:
-                    stale += 1
-                    continue
-                px = _mis_price(s)
-                if px is None:
-                    continue
-                o, h, l = _mis_num(s.get("o")), _mis_num(s.get("h")), _mis_num(s.get("l"))
-                vol = _mis_num(s.get("v"))
-                rows.append((sym, today, o, h or px, l or px, px,
-                             int(vol * 1000) if vol else None, 1.0))
+        rows, _st = twse_mis.fetch_intraday_rows(syms)
         if not rows:
             # 非交易日/開盤前：不寫暫定盤，也不重做快照（避免產生非交易日的空快照）
             return 0, 0
-        psycopg2.extras.execute_values(cur, """
-            INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
-            VALUES %s
-            ON CONFLICT (symbol, ts) DO UPDATE SET
-                open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
-                close=EXCLUDED.close, volume=EXCLUDED.volume
-        """, rows)
+        psycopg2.extras.execute_values(cur, twse_mis.UPSERT_SQL, rows)
         cur.execute("SELECT snapshot_eod_signals()")
         n_sig = cur.fetchone()[0]
         conn.commit()

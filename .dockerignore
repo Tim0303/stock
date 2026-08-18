@@ -1,0 +1,13 @@
+# 只有 api / loader 的 build context 是專案根目錄（為了共用 common/），
+# 其餘服務仍以各自子目錄為 context，不受此檔影響。
+# 白名單制：預設全排除，只放行這兩個服務真正需要 COPY 的目錄，
+# 避免把 .git / backups(每份 30MB+ dump) / web/node_modules / report 送進 build context。
+*
+!/api
+!/common
+!/loader
+
+# 放行目錄內仍要排除的雜物
+**/__pycache__
+**/*.pyc
+**/.env

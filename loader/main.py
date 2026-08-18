@@ -12,13 +12,15 @@ import os
 import sys
 import time
 import argparse
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 import requests
 import pandas as pd
 import yfinance as yf
 import psycopg2
 from psycopg2.extras import execute_values
+
+from common import twse_mis
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
@@ -313,57 +315,7 @@ def run_adjust():
 
 
 # ── 盤中即時報價（TWSE MIS）→ 今日「暫定收盤」 ──────────────────────────────
-# 尾盤即時掃描用：13:10 抓現價當今日暫定 OHLC 寫入 daily_prices，讓策略 view 即時算今日訊號；
-# 15:00 正式收盤那班會以 FinMind 官方收盤 UPSERT 覆蓋同一列。adj_factor 維持 1.0（最新一筆慣例）。
-MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-TPE = timezone(timedelta(hours=8))   # 台北時區（台灣無夏令時），交易日判斷一律以此為準
-
-
-def _mis_num(x):
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if v > 0 else None
-
-
-def _mis_price(s):
-    """現價優先序：z 成交價 → pz 上一筆成交價 → 最佳買賣中點 → 高低中點。無則 None。"""
-    for k in ("z", "pz"):
-        v = _mis_num(s.get(k))
-        if v:
-            return v
-    bv = _mis_num((s.get("b") or "").split("_")[0])
-    av = _mis_num((s.get("a") or "").split("_")[0])
-    if bv and av:
-        return round((bv + av) / 2, 4)
-    if bv or av:
-        return bv or av
-    h, l = _mis_num(s.get("h")), _mis_num(s.get("l"))
-    if h and l:
-        return round((h + l) / 2, 4)
-    return None
-
-
-def fetch_mis_batch(ex_chs):
-    """抓一批（pipe 串接）即時報價，回傳 msgArray；失敗回 []。"""
-    params = {"ex_ch": "|".join(ex_chs), "json": "1", "delay": "0",
-              "_": str(int(time.time() * 1000))}
-    try:
-        r = requests.get(MIS_URL, params=params,
-                         headers={"User-Agent": "Mozilla/5.0",
-                                  "Referer": "https://mis.twse.com.tw/stock/index.jsp"},
-                         timeout=30)
-        b = r.json()
-    except Exception as e:
-        print(f"  [warn] MIS batch 失敗: {e}")
-        return []
-    if b.get("rtcode") != "0000":
-        print(f"  [warn] MIS rtcode={b.get('rtcode')} {b.get('rtmessage')}")
-        return []
-    return b.get("msgArray", []) or []
-
-
+# 抓取／交易日防呆的實作在 common/twse_mis.py（與 api 手動重整端點共用，勿在此另寫一份）。
 def run_intraday():
     """抓全 universe 台股即時報價，UPSERT 今日暫定 OHLCV 到 daily_prices。"""
     conn = connect()
@@ -371,49 +323,14 @@ def run_intraday():
     cur.execute("SELECT symbol FROM symbols WHERE market='TW' ORDER BY symbol")
     syms = {r[0] for r in cur.fetchall()}
 
-    def to_chan(sym):
-        code = sym.split(".")[0]
-        return ("otc_" if sym.endswith(".TWO") else "tse_") + code + ".tw"
-
-    chans = [to_chan(s) for s in sorted(syms)]
-    # 用台北日期（容器預設 UTC，date.today() 在台北 00:00–08:00 會算成前一天）
-    today = datetime.now(TPE).date()
-    today_str = today.strftime("%Y%m%d")
-    rows, missing, stale = [], 0, 0
-    BATCH = 50
-    for i in range(0, len(chans), BATCH):
-        for s in fetch_mis_batch(chans[i:i + BATCH]):
-            code = (s.get("c") or "").strip()
-            sym = code + (".TWO" if s.get("ex") == "otc" else ".TW")
-            if sym not in syms:
-                continue
-            # 交易日防呆：MIS 'd' = 該檔最近交易日(YYYYMMDD)。非交易日(週末/國定假日)或
-            # 開盤前，d 會停留在上一交易日 → 跳過，避免把週五殘影寫進週六/週日(K線假列源頭)。
-            if (s.get("d") or "").strip() != today_str:
-                stale += 1
-                continue
-            close = _mis_price(s)   # z→pz→買賣中點，盡量取得現價
-            if close is None:
-                missing += 1
-                continue
-            o, h, l = _mis_num(s.get("o")), _mis_num(s.get("h")), _mis_num(s.get("l"))
-            vol_lots = _mis_num(s.get("v"))                 # MIS 量單位=張
-            vol = int(vol_lots * 1000) if vol_lots else None  # → 股，對齊歷史
-            rows.append((sym, today, o, h or close, l or close, close, vol, 1.0))
-        time.sleep(0.4)
-
+    rows, st = twse_mis.fetch_intraday_rows(syms, warn=print)
     if not rows:
-        print(f"[intraday] 無今日即時報價（非交易日/非盤中；跳過過期快照 {stale}）")
+        print(f"[intraday] 無今日即時報價（非交易日/非盤中；跳過過期快照 {st['stale']}）")
         cur.close(); conn.close(); return
-    execute_values(cur, """
-        INSERT INTO daily_prices (symbol, ts, open, high, low, close, volume, adj_factor)
-        VALUES %s
-        ON CONFLICT (symbol, ts) DO UPDATE SET
-            open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-            close = EXCLUDED.close, volume = EXCLUDED.volume
-    """, rows)
+    execute_values(cur, twse_mis.UPSERT_SQL, rows)
     conn.commit()
-    print(f"[intraday] {today} 暫定盤 UPSERT {len(rows)} 檔（無成交跳過 {missing}、過期快照跳過 {stale}）")
+    print(f"[intraday] {st['today']} 暫定盤 UPSERT {len(rows)} 檔"
+          f"（無成交跳過 {st['missing']}、過期快照跳過 {st['stale']}）")
     cur.close()
     conn.close()
 

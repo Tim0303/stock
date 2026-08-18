@@ -46,7 +46,10 @@ services:
 
   # ── 人介面後端：FastAPI 唯讀 REST — 角色 stock_readonly ──────────────────
   api:
-    build: ./api
+    # context=專案根目錄：api 與 loader 共用 common/twse_mis.py（MIS 報價/交易日防呆單一收口）
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     container_name: stock-api
     environment:
       # 台北時區：容器預設 UTC，會讓「今日暫定盤」在台北 00:00–08:00 寫成前一天（曾造成週日假 K 線）。
@@ -88,7 +91,10 @@ services:
   # ── 一次性工具容器（profile=tools，預設不啟動）──────────────────────────
   # 行情 ingestion：docker compose run --rm loader 2330.TW AAPL
   loader:
-    build: ./loader
+    # context=專案根目錄：與 api 共用 common/twse_mis.py（見上方 api 註解）
+    build:
+      context: .
+      dockerfile: loader/Dockerfile
     profiles: ["tools"]
     environment:
       DATABASE_URL: postgresql://stock_app:${STOCK_APP_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
