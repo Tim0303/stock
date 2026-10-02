@@ -1,3 +1,5 @@
+// [暫時關閉 2026-09-04] 註冊功能停用：此頁已從 main.jsx 路由移除（/register 導回 /login），
+// 後端 /api/auth/register 亦已註解。恢復時把 main.jsx 的 import/Route 還原即可，本檔不需改動。
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiJson } from '../api.js'

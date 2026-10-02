@@ -21,8 +21,9 @@ export default function Login() {
     } catch (ex) { setErr(ex.message || '登入失敗') } finally { setBusy(false) }
   }
 
+  // [暫時關閉] 註冊入口：原 footer 為「還沒有帳號？<Link to="/register">免費註冊</Link>　·　」，恢復註冊時加回
   return (
-    <AuthShell title="登入" footer={<>還沒有帳號？<Link to="/register" style={{ color: '#00d4ff' }}>免費註冊</Link>　·　<Link to="/forgot" style={{ color: '#00d4ff' }}>忘記密碼</Link></>}>
+    <AuthShell title="登入" footer={<><Link to="/forgot" style={{ color: '#00d4ff' }}>忘記密碼</Link></>}>
       <form onSubmit={submit}>
         <Msg>{err}</Msg>
         <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />

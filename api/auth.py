@@ -166,9 +166,10 @@ def gate_request(request: Request) -> JSONResponse | None:
 
 
 # ── 請求模型 ──────────────────────────────────────────────────────────────────
-class RegisterIn(BaseModel):
-    email: str
-    password: str
+# [暫時關閉] 隨 /register 端點一併停用
+# class RegisterIn(BaseModel):
+#     email: str
+#     password: str
 
 
 class LoginIn(BaseModel):
@@ -201,33 +202,34 @@ def _valid_password(pw: str) -> bool:
 
 
 # ── 端點 ──────────────────────────────────────────────────────────────────────
-@router.post("/register")
-@limiter.limit("5/minute;30/hour")
-def register(request: Request, body: RegisterIn):
-    """建帳號＋14天試用＋寄驗證信。永遠回 200 防帳號列舉。"""
-    email = _norm_email(body.email)
-    generic = {"ok": True, "message": "若 Email 有效，將寄出驗證信"}
-    if not email or not _valid_password(body.password):
-        return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
-    exists = db_auth.auth_query("SELECT id FROM app_users WHERE lower(email)=%s", (email,))
-    if exists:
-        send_email(email, "您已有帳號",
-                   f"您的 Email 已註冊過。若忘記密碼，請至 {APP_BASE_URL}/forgot 重設。")
-        return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
-    pw_hash = ph.hash(body.password)
-    rows = db_auth.auth_execute(
-        "INSERT INTO app_users (email, password_hash) VALUES (%s,%s) RETURNING id", (email, pw_hash))
-    uid = rows[0]["id"]
-    db_auth.auth_execute(
-        "INSERT INTO subscriptions (user_id, status, plan, trial_end) "
-        "VALUES (%s,'trialing','trial', now() + (%s||' days')::interval)", (uid, TRIAL_DAYS))
-    raw = secrets.token_urlsafe(32)
-    db_auth.auth_execute(
-        "INSERT INTO email_verification_tokens (token_hash, user_id, expires_at) VALUES (%s,%s,%s)",
-        (_sha256(raw), uid, _now() + VERIFY_TTL))
-    send_email(email, "請驗證您的 Email",
-               f"歡迎！請點此完成驗證並啟用 {TRIAL_DAYS} 天免費試用：\n{APP_BASE_URL}/verify-email?token={raw}")
-    return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
+# ── [暫時關閉 2026-09-04] 註冊功能停用：以下 /register 端點整段註解，恢復時取消註解即可 ──
+# @router.post("/register")
+# @limiter.limit("5/minute;30/hour")
+# def register(request: Request, body: RegisterIn):
+#     """建帳號＋14天試用＋寄驗證信。永遠回 200 防帳號列舉。"""
+#     email = _norm_email(body.email)
+#     generic = {"ok": True, "message": "若 Email 有效，將寄出驗證信"}
+#     if not email or not _valid_password(body.password):
+#         return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
+#     exists = db_auth.auth_query("SELECT id FROM app_users WHERE lower(email)=%s", (email,))
+#     if exists:
+#         send_email(email, "您已有帳號",
+#                    f"您的 Email 已註冊過。若忘記密碼，請至 {APP_BASE_URL}/forgot 重設。")
+#         return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
+#     pw_hash = ph.hash(body.password)
+#     rows = db_auth.auth_execute(
+#         "INSERT INTO app_users (email, password_hash) VALUES (%s,%s) RETURNING id", (email, pw_hash))
+#     uid = rows[0]["id"]
+#     db_auth.auth_execute(
+#         "INSERT INTO subscriptions (user_id, status, plan, trial_end) "
+#         "VALUES (%s,'trialing','trial', now() + (%s||' days')::interval)", (uid, TRIAL_DAYS))
+#     raw = secrets.token_urlsafe(32)
+#     db_auth.auth_execute(
+#         "INSERT INTO email_verification_tokens (token_hash, user_id, expires_at) VALUES (%s,%s,%s)",
+#         (_sha256(raw), uid, _now() + VERIFY_TTL))
+#     send_email(email, "請驗證您的 Email",
+#                f"歡迎！請點此完成驗證並啟用 {TRIAL_DAYS} 天免費試用：\n{APP_BASE_URL}/verify-email?token={raw}")
+#     return JSONResponse(generic, status_code=200, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/login")

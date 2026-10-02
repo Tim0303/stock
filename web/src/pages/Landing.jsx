@@ -27,8 +27,8 @@ export default function Landing() {
               </Link>
             ) : (
               <>
-                <Link to="/register" className="mono" style={btn(true)}>免費試用 14 天</Link>
-                <Link to="/login" className="mono" style={btn(false)}>登入</Link>
+                {/* [暫時關閉] 註冊入口：<Link to="/register" className="mono" style={btn(true)}>免費試用 14 天</Link> */}
+                <Link to="/login" className="mono" style={btn(true)}>登入</Link>
               </>
             )}
           </div>
